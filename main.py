@@ -27,10 +27,10 @@ def pode_usar_contract(member: discord.Member):
 
 
 class ContractView(discord.ui.View):
-    def __init__(self, contratado_id: int, team: str):
+    def __init__(self, contratado_id: int, role_id: int):
         super().__init__(timeout=None)
         self.contratado_id = contratado_id
-        self.team = team
+        self.role_id = role_id
 
     @discord.ui.button(label="Aceitar", style=discord.ButtonStyle.green)
     async def aceitar(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -41,12 +41,49 @@ class ContractView(discord.ui.View):
             )
             return
 
+        guild = None
+        role = None
+
+        for servidor in bot.guilds:
+            cargo = servidor.get_role(self.role_id)
+            membro = servidor.get_member(self.contratado_id)
+
+            if cargo and membro:
+                guild = servidor
+                role = cargo
+                break
+
+        if guild is None or role is None:
+            await interaction.response.send_message(
+                "Não consegui encontrar o servidor ou o cargo.",
+                ephemeral=True
+            )
+            return
+
+        membro = guild.get_member(self.contratado_id)
+
+        if membro is None:
+            await interaction.response.send_message(
+                "Não consegui encontrar você no servidor.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            await membro.add_roles(role, reason="Contrato aceito")
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "Não consegui dar o cargo. Coloque o cargo do bot acima desse cargo.",
+                ephemeral=True
+            )
+            return
+
         canal = bot.get_channel(CANAL_ACCEPT_ID)
 
         if canal:
             embed = discord.Embed(
                 title="Contrato aceito!",
-                description=f"{interaction.user.mention} foi aceito no time **{self.team}**.",
+                description=f"{membro.mention} aceitou o contrato e entrou no time **{role.name}**.",
                 color=discord.Color.green()
             )
             await canal.send(embed=embed)
@@ -55,7 +92,7 @@ class ContractView(discord.ui.View):
             item.disabled = True
 
         await interaction.response.edit_message(
-            content="Você aceitou o contrato!",
+            content="Você aceitou o contrato e recebeu o cargo!",
             view=self
         )
 
@@ -80,12 +117,12 @@ class ContractView(discord.ui.View):
 @bot.tree.command(name="contract", description="Enviar contrato para um usuário")
 @app_commands.describe(
     user="Usuário que será contratado",
-    team="Nome do time"
+    team="Cargo/time que o usuário vai receber"
 )
 async def contract(
     interaction: discord.Interaction,
     user: discord.Member,
-    team: str
+    team: discord.Role
 ):
     if not isinstance(interaction.user, discord.Member):
         await interaction.response.send_message(
@@ -101,18 +138,41 @@ async def contract(
         )
         return
 
+    if team.permissions.administrator:
+        await interaction.response.send_message(
+            "Você não pode usar um cargo com permissão de administrador.",
+            ephemeral=True
+        )
+        return
+
+    if team >= interaction.user.top_role:
+        await interaction.response.send_message(
+            "Você só pode contratar para cargos abaixo do seu maior cargo.",
+            ephemeral=True
+        )
+        return
+
+    bot_member = interaction.guild.me
+
+    if team >= bot_member.top_role:
+        await interaction.response.send_message(
+            "Eu não consigo dar esse cargo. Meu cargo precisa estar acima dele.",
+            ephemeral=True
+        )
+        return
+
     embed = discord.Embed(
         title="Você recebeu um contrato!",
-        description=f"Você foi contratado pelo time **{team}**.",
+        description=f"Você foi contratado para o time **{team.name}**.",
         color=discord.Color.blue()
     )
     embed.add_field(name="Contratante:", value=interaction.user.mention, inline=False)
-    embed.add_field(name="Time:", value=team, inline=False)
+    embed.add_field(name="Time:", value=team.mention, inline=False)
 
     try:
         await user.send(
             embed=embed,
-            view=ContractView(user.id, team)
+            view=ContractView(user.id, team.id)
         )
 
         await interaction.response.send_message(
