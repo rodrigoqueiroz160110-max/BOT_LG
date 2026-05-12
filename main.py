@@ -8,410 +8,179 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-OWNER_ID = 1291891135710625805
-CANAL_VENDAS_ID = 1302504402514350097
+CARGOS_CONTRACT = [
+    1503241324277796864,
+    1503241325137629315
+]
+
+CANAL_ACCEPT_ID = 1503241511696076831
+CANAL_RELEASE_ID = 1503241512819888129
 
 intents = discord.Intents.default()
-intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-class AvaliacaoView(discord.ui.View):
-    def __init__(self, log_channel_id: int, log_message_id: int):
-        super().__init__(timeout=None)
-        self.log_channel_id = log_channel_id
-        self.log_message_id = log_message_id
+def pode_usar_contract(member: discord.Member):
+    return any(role.id in CARGOS_CONTRACT for role in member.roles)
 
-    async def avaliar(self, interaction: discord.Interaction, nota: int):
-        canal = bot.get_channel(self.log_channel_id)
+
+class ContractView(discord.ui.View):
+    def __init__(self, contratado_id: int, team: str):
+        super().__init__(timeout=None)
+        self.contratado_id = contratado_id
+        self.team = team
+
+    @discord.ui.button(label="Aceitar", style=discord.ButtonStyle.green)
+    async def aceitar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.contratado_id:
+            await interaction.response.send_message(
+                "Esse contrato não é para você.",
+                ephemeral=True
+            )
+            return
+
+        canal = bot.get_channel(CANAL_ACCEPT_ID)
 
         if canal:
-            try:
-                mensagem = await canal.fetch_message(self.log_message_id)
-
-                if mensagem.embeds:
-                    embed = mensagem.embeds[0]
-                    embed.set_field_at(
-                        index=4,
-                        name="Avaliação do cliente:",
-                        value=f"{nota}/5 ⭐",
-                        inline=False
-                    )
-
-                    await mensagem.edit(embed=embed)
-
-            except Exception as e:
-                print(f"Erro ao atualizar avaliação: {e}")
-
-        await interaction.response.send_message(
-            f"Obrigado pela avaliação! Você avaliou com {nota}/5 ⭐",
-            ephemeral=True
-        )
+            embed = discord.Embed(
+                title="Contrato aceito!",
+                description=f"{interaction.user.mention} foi aceito no time **{self.team}**.",
+                color=discord.Color.green()
+            )
+            await canal.send(embed=embed)
 
         for item in self.children:
             item.disabled = True
 
-        try:
-            await interaction.message.edit(view=self)
-        except:
-            pass
-
-    @discord.ui.button(label="1", style=discord.ButtonStyle.red)
-    async def nota_1(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.avaliar(interaction, 1)
-
-    @discord.ui.button(label="2", style=discord.ButtonStyle.red)
-    async def nota_2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.avaliar(interaction, 2)
-
-    @discord.ui.button(label="3", style=discord.ButtonStyle.gray)
-    async def nota_3(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.avaliar(interaction, 3)
-
-    @discord.ui.button(label="4", style=discord.ButtonStyle.green)
-    async def nota_4(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.avaliar(interaction, 4)
-
-    @discord.ui.button(label="5", style=discord.ButtonStyle.green)
-    async def nota_5(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.avaliar(interaction, 5)
-
-
-class ValorStockModal(discord.ui.Modal, title="Informações da venda"):
-    def __init__(self, canal: discord.TextChannel, produto: str):
-        super().__init__()
-        self.canal = canal
-        self.produto = produto
-
-    valor = discord.ui.TextInput(
-        label="Por qual valor irá vender?",
-        placeholder="Ex: R$10,00",
-        required=True
-    )
-
-    stock = discord.ui.TextInput(
-        label="Qual o stock?",
-        placeholder="Ex: 5 unidades",
-        required=True
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="Novo Produto Registrado!!",
-            color=discord.Color.green()
-        )
-        embed.add_field(name="Produto:", value=self.produto, inline=False)
-        embed.add_field(name="Valor:", value=str(self.valor), inline=False)
-        embed.add_field(name="Stock:", value=str(self.stock), inline=False)
-
-        view = CarrinhoView(
-            produto=self.produto,
-            valor=str(self.valor),
-            stock=str(self.stock),
-            owner_id=OWNER_ID
+        await interaction.response.edit_message(
+            content="Você aceitou o contrato!",
+            view=self
         )
 
-        await self.canal.send(embed=embed, view=view)
-
-        await interaction.response.send_message(
-            f"Venda enviada em {self.canal.mention}!",
-            ephemeral=True
-        )
-
-
-class ProdutoSelect(discord.ui.Select):
-    def __init__(self, canal: discord.TextChannel):
-        self.canal = canal
-
-        options = [
-            discord.SelectOption(label="Bot"),
-            discord.SelectOption(label="Server Model"),
-            discord.SelectOption(label="Pitch"),
-            discord.SelectOption(label="Hub"),
-            discord.SelectOption(label="Nitro"),
-        ]
-
-        super().__init__(
-            placeholder="Selecione o produto que deseja vender",
-            options=options
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        produto = self.values[0]
-        await interaction.response.send_modal(
-            ValorStockModal(self.canal, produto)
-        )
-
-
-class ProdutoView(discord.ui.View):
-    def __init__(self, canal: discord.TextChannel):
-        super().__init__(timeout=300)
-        self.add_item(ProdutoSelect(canal))
-
-
-class CarrinhoView(discord.ui.View):
-    def __init__(self, produto: str, valor: str, stock: str, owner_id: int):
-        super().__init__(timeout=None)
-        self.produto = produto
-        self.valor = valor
-        self.stock = stock
-        self.owner_id = owner_id
-
-    @discord.ui.button(
-        label="Colocar no carrinho 🛒",
-        style=discord.ButtonStyle.green
-    )
-    async def colocar_carrinho(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        guild = interaction.guild
-        cliente = interaction.user
-
-        canal_existente = discord.utils.get(
-            guild.text_channels,
-            name=f"carrinho-de-{cliente.name}".lower()
-        )
-
-        if canal_existente:
+    @discord.ui.button(label="Recusar", style=discord.ButtonStyle.red)
+    async def recusar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.contratado_id:
             await interaction.response.send_message(
-                f"Você já tem um carrinho aberto: {canal_existente.mention}",
+                "Esse contrato não é para você.",
                 ephemeral=True
             )
             return
 
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            cliente: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True
-            ),
-            guild.me: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                manage_channels=True,
-                read_message_history=True
-            )
-        }
+        for item in self.children:
+            item.disabled = True
 
-        owner = guild.get_member(self.owner_id)
-        if owner:
-            overwrites[owner] = discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                manage_channels=True
-            )
-
-        await interaction.response.defer(ephemeral=True)
-
-        canal = await guild.create_text_channel(
-            name=f"carrinho-de-{cliente.name}",
-            overwrites=overwrites
-        )
-
-        embed = discord.Embed(
-            title="Olá, bem-vindo! Confirme as opções:",
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="Produto:", value=self.produto, inline=False)
-        embed.add_field(name="Valor:", value=self.valor, inline=False)
-
-        await canal.send(
-            content=cliente.mention,
-            embed=embed,
-            view=ConfirmarCarrinhoView(
-                produto=self.produto,
-                valor=self.valor,
-                cliente_id=cliente.id,
-                owner_id=self.owner_id
-            )
-        )
-
-        await interaction.followup.send(
-            f"Carrinho criado: {canal.mention}",
-            ephemeral=True
+        await interaction.response.edit_message(
+            content="Você recusou o contrato.",
+            view=self
         )
 
 
-class ConfirmarCarrinhoView(discord.ui.View):
-    def __init__(self, produto: str, valor: str, cliente_id: int, owner_id: int):
-        super().__init__(timeout=None)
-        self.produto = produto
-        self.valor = valor
-        self.cliente_id = cliente_id
-        self.owner_id = owner_id
-
-    @discord.ui.button(
-        label="Confirmar compra",
-        style=discord.ButtonStyle.green
-    )
-    async def confirmar(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        if interaction.user.id != self.cliente_id:
-            await interaction.response.send_message(
-                "Apenas o cliente deste carrinho pode confirmar.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.defer()
-
-        try:
-            await interaction.message.delete()
-        except:
-            pass
-
-        embed = discord.Embed(
-            title="Compra confirmada!",
-            description="Aguarde o atendimento do responsável.",
-            color=discord.Color.orange()
-        )
-        embed.add_field(name="Produto:", value=self.produto, inline=False)
-        embed.add_field(name="Valor:", value=self.valor, inline=False)
-
-        await interaction.channel.send(
-            content=f"<@{self.owner_id}> atendimento solicitado!",
-            embed=embed,
-            view=AtendimentoView(
-                produto=self.produto,
-                valor=self.valor,
-                cliente_id=self.cliente_id,
-                owner_id=self.owner_id
-            )
-        )
-
-
-class AtendimentoView(discord.ui.View):
-    def __init__(self, produto: str, valor: str, cliente_id: int, owner_id: int):
-        super().__init__(timeout=None)
-        self.produto = produto
-        self.valor = valor
-        self.cliente_id = cliente_id
-        self.owner_id = owner_id
-
-    @discord.ui.button(
-        label="Encerrar atendimento",
-        style=discord.ButtonStyle.red
-    )
-    async def encerrar(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        await interaction.response.send_message(
-            "Canal será encerrado...",
-            ephemeral=True
-        )
-        await interaction.channel.delete()
-
-    @discord.ui.button(
-        label="Compra realizada",
-        style=discord.ButtonStyle.blurple
-    )
-    async def compra_realizada(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                "Apenas o criador pode usar esse botão.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True)
-
-        guild = interaction.guild
-        cliente = guild.get_member(self.cliente_id)
-        canal_vendas = bot.get_channel(CANAL_VENDAS_ID)
-
-        if canal_vendas is None:
-            await interaction.followup.send(
-                "Erro: canal de vendas não encontrado.",
-                ephemeral=True
-            )
-            return
-
-        cliente_texto = cliente.mention if cliente else f"<@{self.cliente_id}>"
-
-        embed_venda = discord.Embed(
-            title="Nova venda realizada!",
-            color=discord.Color.green()
-        )
-        embed_venda.add_field(name="Produto:", value=self.produto, inline=False)
-        embed_venda.add_field(name="Valor:", value=self.valor, inline=False)
-        embed_venda.add_field(name="Cliente:", value=cliente_texto, inline=False)
-        embed_venda.add_field(name="Mensagem:", value="Volte sempre!!", inline=False)
-        embed_venda.add_field(
-            name="Avaliação do cliente:",
-            value="Cliente não avaliou :(",
-            inline=False
-        )
-
-        mensagem_log = await canal_vendas.send(embed=embed_venda)
-
-        if cliente:
-            try:
-                embed_dm = discord.Embed(
-                    title="Avalie o vendedor!",
-                    description="Escolha uma nota de 1 a 5 abaixo.",
-                    color=discord.Color.blue()
-                )
-                embed_dm.add_field(name="Produto:", value=self.produto, inline=False)
-                embed_dm.add_field(name="Valor:", value=self.valor, inline=False)
-
-                await cliente.send(
-                    embed=embed_dm,
-                    view=AvaliacaoView(
-                        log_channel_id=CANAL_VENDAS_ID,
-                        log_message_id=mensagem_log.id
-                    )
-                )
-            except:
-                pass
-
-        try:
-            await interaction.user.send(
-                f"Nova compra feita!!\n\nProduto: {self.produto}\nValor: {self.valor}"
-            )
-        except:
-            pass
-
-        await interaction.followup.send(
-            "Compra aprovada, venda enviada no canal e avaliação enviada na DM do cliente.",
-            ephemeral=True
-        )
-
-        await interaction.channel.delete()
-
-
-@bot.tree.command(name="enviarvenda", description="Enviar uma venda em um canal")
-@app_commands.describe(canal="Canal onde a venda será enviada")
-async def enviarvenda(
+@bot.tree.command(name="contract", description="Enviar contrato para um usuário")
+@app_commands.describe(
+    user="Usuário que será contratado",
+    team="Nome do time"
+)
+async def contract(
     interaction: discord.Interaction,
-    canal: discord.TextChannel
+    user: discord.Member,
+    team: str
 ):
-    if interaction.user.id != OWNER_ID:
+    if not isinstance(interaction.user, discord.Member):
         await interaction.response.send_message(
-            "Apenas o criador pode usar esse comando.",
+            "Erro ao verificar seus cargos.",
             ephemeral=True
         )
         return
 
+    if not pode_usar_contract(interaction.user):
+        await interaction.response.send_message(
+            "Você não tem permissão para usar esse comando.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="Você recebeu um contrato!",
+        description=f"Você foi contratado pelo time **{team}**.",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Contratante:", value=interaction.user.mention, inline=False)
+    embed.add_field(name="Time:", value=team, inline=False)
+
+    try:
+        await user.send(
+            embed=embed,
+            view=ContractView(user.id, team)
+        )
+
+        await interaction.response.send_message(
+            f"Contrato enviado na DM de {user.mention}.",
+            ephemeral=True
+        )
+
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "Não consegui mandar DM para esse usuário. Talvez ele esteja com a DM fechada.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="release", description="Sair de um time")
+@app_commands.describe(team="Nome do time")
+async def release(
+    interaction: discord.Interaction,
+    team: str
+):
+    canal = bot.get_channel(CANAL_RELEASE_ID)
+
+    if canal is None:
+        await interaction.response.send_message(
+            "Canal de release não encontrado.",
+            ephemeral=True
+        )
+        return
+
+    await canal.send(
+        f"{interaction.user.mention} saiu do time **{team}**."
+    )
+
     await interaction.response.send_message(
-        "Quais produtos desejas vender senhor?",
-        view=ProdutoView(canal),
+        "Release enviado com sucesso.",
         ephemeral=True
     )
+
+
+@bot.tree.command(name="squad", description="Mostrar membros de um cargo/time")
+@app_commands.describe(team="Cargo do time")
+async def squad(
+    interaction: discord.Interaction,
+    team: discord.Role
+):
+    if team.permissions.administrator:
+        await interaction.response.send_message(
+            "Você não pode selecionar um cargo com permissão de administrador.",
+            ephemeral=True
+        )
+        return
+
+    membros = team.members
+
+    if not membros:
+        lista = "Nenhum usuário encontrado nesse cargo."
+    else:
+        lista = "\n".join(
+            [f"P: {membro.mention} Class D" for membro in membros]
+        )
+
+    embed = discord.Embed(
+        title=f"SquadSheet of {team.name}",
+        description=lista,
+        color=discord.Color.purple()
+    )
+
+    await interaction.response.send_message(embed=embed)
 
 
 @bot.event
