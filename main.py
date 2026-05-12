@@ -1,4 +1,5 @@
 import os
+import json
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -16,10 +17,42 @@ CARGOS_CONTRACT = [
 CANAL_ACCEPT_ID = 1503241511696076831
 CANAL_RELEASE_ID = 1503241512819888129
 
+CONTRACTS_FILE = "contracts.json"
+
 intents = discord.Intents.default()
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+def carregar_contracts():
+    if not os.path.exists(CONTRACTS_FILE):
+        return {}
+
+    with open(CONTRACTS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def salvar_contracts(data):
+    with open(CONTRACTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+
+def salvar_ultimo_contract(user_id: int, role_id: int):
+    data = carregar_contracts()
+    data[str(user_id)] = role_id
+    salvar_contracts(data)
+
+
+def pegar_ultimo_contract(user_id: int):
+    data = carregar_contracts()
+    return data.get(str(user_id))
+
+
+def remover_ultimo_contract(user_id: int):
+    data = carregar_contracts()
+    data.pop(str(user_id), None)
+    salvar_contracts(data)
 
 
 def pode_usar_contract(member: discord.Member):
@@ -43,34 +76,28 @@ class ContractView(discord.ui.View):
 
         guild = None
         role = None
+        membro = None
 
         for servidor in bot.guilds:
             cargo = servidor.get_role(self.role_id)
-            membro = servidor.get_member(self.contratado_id)
+            membro_servidor = servidor.get_member(self.contratado_id)
 
-            if cargo and membro:
+            if cargo and membro_servidor:
                 guild = servidor
                 role = cargo
+                membro = membro_servidor
                 break
 
-        if guild is None or role is None:
+        if guild is None or role is None or membro is None:
             await interaction.response.send_message(
-                "Não consegui encontrar o servidor ou o cargo.",
-                ephemeral=True
-            )
-            return
-
-        membro = guild.get_member(self.contratado_id)
-
-        if membro is None:
-            await interaction.response.send_message(
-                "Não consegui encontrar você no servidor.",
+                "Não consegui encontrar o servidor, cargo ou usuário.",
                 ephemeral=True
             )
             return
 
         try:
             await membro.add_roles(role, reason="Contrato aceito")
+            salvar_ultimo_contract(membro.id, role.id)
         except discord.Forbidden:
             await interaction.response.send_message(
                 "Não consegui dar o cargo. Coloque o cargo do bot acima desse cargo.",
@@ -110,6 +137,83 @@ class ContractView(discord.ui.View):
 
         await interaction.response.edit_message(
             content="Você recusou o contrato.",
+            view=self
+        )
+
+
+class ReleaseConfirmView(discord.ui.View):
+    def __init__(self, user_id: int, role_id: int):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.role_id = role_id
+
+    @discord.ui.button(label="Confirmar saída", style=discord.ButtonStyle.red)
+    async def confirmar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "Essa confirmação não é para você.",
+                ephemeral=True
+            )
+            return
+
+        guild = interaction.guild
+        membro = interaction.user
+        role = guild.get_role(self.role_id)
+
+        if role is None:
+            await interaction.response.send_message(
+                "Não encontrei o cargo do seu último contract.",
+                ephemeral=True
+            )
+            return
+
+        if role not in membro.roles:
+            remover_ultimo_contract(membro.id)
+            await interaction.response.send_message(
+                "Você não tem mais esse cargo.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            await membro.remove_roles(role, reason="Release confirmado")
+            remover_ultimo_contract(membro.id)
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "Não consegui remover o cargo. Meu cargo precisa estar acima dele.",
+                ephemeral=True
+            )
+            return
+
+        canal = bot.get_channel(CANAL_RELEASE_ID)
+
+        if canal:
+            await canal.send(
+                f"{membro.mention} saiu do time **{role.name}**."
+            )
+
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            content=f"Você saiu do time **{role.name}**.",
+            view=self
+        )
+
+    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.gray)
+    async def cancelar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "Essa confirmação não é para você.",
+                ephemeral=True
+            )
+            return
+
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            content="Saída cancelada.",
             view=self
         )
 
@@ -187,28 +291,44 @@ async def contract(
         )
 
 
-@bot.tree.command(name="release", description="Sair de um time")
-@app_commands.describe(team="Nome do time")
-async def release(
-    interaction: discord.Interaction,
-    team: str
-):
-    canal = bot.get_channel(CANAL_RELEASE_ID)
+@bot.tree.command(name="release", description="Sair do último time recebido por contract")
+async def release(interaction: discord.Interaction):
+    role_id = pegar_ultimo_contract(interaction.user.id)
 
-    if canal is None:
+    if role_id is None:
         await interaction.response.send_message(
-            "Canal de release não encontrado.",
+            "Você não tem nenhum contract salvo para sair.",
             ephemeral=True
         )
         return
 
-    await canal.send(
-        f"{interaction.user.mention} saiu do time **{team}**."
+    role = interaction.guild.get_role(role_id)
+
+    if role is None:
+        remover_ultimo_contract(interaction.user.id)
+        await interaction.response.send_message(
+            "O cargo do seu último contract não existe mais.",
+            ephemeral=True
+        )
+        return
+
+    if role not in interaction.user.roles:
+        remover_ultimo_contract(interaction.user.id)
+        await interaction.response.send_message(
+            "Você não tem mais o cargo do seu último contract.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="Confirmar release",
+        description=f"Você tem certeza que quer sair do time **{role.name}**?",
+        color=discord.Color.orange()
     )
 
     await interaction.response.send_message(
-        "Release enviado com sucesso.",
-        ephemeral=True
+        embed=embed,
+        view=ReleaseConfirmView(interaction.user.id, role.id)
     )
 
 
