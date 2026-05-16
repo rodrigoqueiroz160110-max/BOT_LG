@@ -1,7 +1,6 @@
 import os
 import json
-import random
-from datetime import date
+import uuid
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -11,17 +10,11 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-CARGOS_CONTRACT = [
-    1503241324277796864,
-    1503241325137629315
-]
-
 CANAL_ACCEPT_ID = 1503241511696076831
 CANAL_RELEASE_ID = 1503241512819888129
 CANAL_FREEAGENCY_ID = 1503241510320341134
 
-CONTRACTS_FILE = "contracts.json"
-COINS_FILE = "ufa_coins.json"
+CLUBS_FILE = "clubs.json"
 
 intents = discord.Intents.default()
 intents.members = True
@@ -29,635 +22,718 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-def carregar_contracts():
-    if not os.path.exists(CONTRACTS_FILE):
-        return {}
+# -----------------------------
+# Storage
+# -----------------------------
+def load_clubs():
+    if not os.path.exists(CLUBS_FILE):
+        return {"clubs": {}}
 
-    with open(CONTRACTS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    with open(CLUBS_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if "clubs" not in data:
+        data["clubs"] = {}
+
+    return data
 
 
-def salvar_contracts(data):
-    with open(CONTRACTS_FILE, "w", encoding="utf-8") as f:
+def save_clubs(data):
+    with open(CLUBS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
 
-def salvar_ultimo_contract(user_id: int, role_id: int):
-    data = carregar_contracts()
-    data[str(user_id)] = role_id
-    salvar_contracts(data)
+def normalize_name(name: str) -> str:
+    return " ".join(name.strip().split())
 
 
-def pegar_ultimo_contract(user_id: int):
-    data = carregar_contracts()
-    return data.get(str(user_id))
+def make_club_id(name: str) -> str:
+    base = normalize_name(name).lower().replace(" ", "-")
+    return f"{base}-{uuid.uuid4().hex[:6]}"
 
 
-def remover_ultimo_contract(user_id: int):
-    data = carregar_contracts()
-    data.pop(str(user_id), None)
-    salvar_contracts(data)
+def get_club_by_id(club_id: str):
+    data = load_clubs()
+    return data["clubs"].get(club_id)
 
 
-def carregar_coins():
-    if not os.path.exists(COINS_FILE):
-        return {}
+def find_club_by_name(name: str):
+    target = normalize_name(name).lower()
+    data = load_clubs()
 
-    with open(COINS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    for club_id, club in data["clubs"].items():
+        if club["name"].lower() == target:
+            return club_id, club
 
-
-def salvar_coins(data):
-    with open(COINS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
+    return None, None
 
 
-def pegar_user_coins(user_id: int):
-    data = carregar_coins()
-    user_data = data.get(str(user_id), {})
-    return int(user_data.get("coins", 0))
+def get_user_clubs(user_id: int):
+    data = load_clubs()
+    clubs = []
+
+    for club_id, club in data["clubs"].items():
+        if str(user_id) in club.get("managers", []):
+            clubs.append((club_id, club))
+
+    return clubs
 
 
-def setar_user_coins(user_id: int, coins: int):
-    data = carregar_coins()
+def get_player_club(user_id: int):
+    data = load_clubs()
+
+    for club_id, club in data["clubs"].items():
+        if str(user_id) in club.get("players", []):
+            return club_id, club
+
+    return None, None
+
+
+def add_player_to_club(user_id: int, club_id: str):
+    data = load_clubs()
+    club = data["clubs"].get(club_id)
+
+    if club is None:
+        return False
+
     user_key = str(user_id)
 
-    if user_key not in data:
-        data[user_key] = {}
+    # A player can only be in one club at a time.
+    for other_club in data["clubs"].values():
+        if user_key in other_club.get("players", []):
+            other_club["players"].remove(user_key)
 
-    data[user_key]["coins"] = max(0, int(coins))
-    salvar_coins(data)
+    if user_key not in club["players"]:
+        club["players"].append(user_key)
 
-
-def adicionar_user_coins(user_id: int, amount: int):
-    saldo_atual = pegar_user_coins(user_id)
-    novo_saldo = saldo_atual + amount
-    setar_user_coins(user_id, novo_saldo)
-    return novo_saldo
+    save_clubs(data)
+    return True
 
 
-def pegar_ultimo_daily(user_id: int):
-    data = carregar_coins()
-    user_data = data.get(str(user_id), {})
-    return user_data.get("last_daily")
+def remove_player_from_club(user_id: int, club_id: str):
+    data = load_clubs()
+    club = data["clubs"].get(club_id)
 
+    if club is None:
+        return False
 
-def setar_ultimo_daily(user_id: int):
-    data = carregar_coins()
     user_key = str(user_id)
 
-    if user_key not in data:
-        data[user_key] = {}
+    if user_key in club.get("players", []):
+        club["players"].remove(user_key)
+        save_clubs(data)
+        return True
 
-    data[user_key]["last_daily"] = date.today().isoformat()
-    salvar_coins(data)
-
-
-def gerar_daily_reward():
-    chance = random.random()
-
-    if chance < 0.40:
-        return random.randint(100, 400)
-
-    if chance < 0.60:
-        return random.randint(500, 2000)
-
-    if chance < 0.68:
-        return random.randint(2001, 5000)
-
-    return random.randint(50, 99)
+    return False
 
 
-def pode_usar_contract(member: discord.Member):
-    return any(role.id in CARGOS_CONTRACT for role in member.roles)
+def is_admin(interaction: discord.Interaction) -> bool:
+    permissions = getattr(interaction.user, "guild_permissions", None)
+    return bool(permissions and permissions.administrator)
 
 
-class UfaBetView(discord.ui.View):
-    def __init__(self, user_id: int, amount: int, correct_numbers: set[int], numbers: list[int]):
-        super().__init__(timeout=60)
-        self.user_id = user_id
-        self.amount = amount
-        self.correct_numbers = correct_numbers
-
-        for number in numbers:
-            button = discord.ui.Button(
-                label=str(number),
-                style=discord.ButtonStyle.blurple
-            )
-            button.callback = self.create_callback(number)
-            self.add_item(button)
-
-    def create_callback(self, number: int):
-        async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user_id:
-                await interaction.response.send_message(
-                    "This bet is not for you.",
-                    ephemeral=True
-                )
-                return
-
-            for item in self.children:
-                item.disabled = True
-
-            if number in self.correct_numbers:
-                winnings = self.amount * 2
-                new_balance = adicionar_user_coins(self.user_id, winnings)
-
-                await interaction.response.edit_message(
-                    content=(
-                        f"Correct number: **{number}**!\n"
-                        f"You won **{winnings} UFA coins**.\n"
-                        f"Your new balance is **{new_balance} UFA coins**."
-                    ),
-                    view=self
-                )
-            else:
-                new_balance = pegar_user_coins(self.user_id)
-
-                await interaction.response.edit_message(
-                    content=(
-                        f"Wrong number: **{number}**.\n"
-                        f"You lost **{self.amount} UFA coins**.\n"
-                        f"Your new balance is **{new_balance} UFA coins**."
-                    ),
-                    view=self
-                )
-
-        return callback
-
-    async def on_timeout(self):
-        for item in self.children:
-            item.disabled = True
+def is_manager_for_club(user_id: int, club_id: str) -> bool:
+    club = get_club_by_id(club_id)
+    return bool(club and str(user_id) in club.get("managers", []))
 
 
+async def club_autocomplete(interaction: discord.Interaction, current: str):
+    data = load_clubs()
+    current_lower = current.lower()
 
-class ContractView(discord.ui.View):
-    def __init__(self, contratado_id: int, role_id: int):
-        super().__init__(timeout=None)
-        self.contratado_id = contratado_id
-        self.role_id = role_id
+    choices = []
+    for club_id, club in data["clubs"].items():
+        name = club["name"]
+        if current_lower in name.lower():
+            choices.append(app_commands.Choice(name=name, value=club_id))
 
-    @discord.ui.button(label="Aceitar", style=discord.ButtonStyle.green)
-    async def aceitar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.contratado_id:
-            await interaction.response.send_message(
-                "Esse contrato não é para você.",
-                ephemeral=True
-            )
-            return
-
-        guild = None
-        role = None
-        membro = None
-
-        for servidor in bot.guilds:
-            cargo = servidor.get_role(self.role_id)
-            membro_servidor = servidor.get_member(self.contratado_id)
-
-            if cargo and membro_servidor:
-                guild = servidor
-                role = cargo
-                membro = membro_servidor
-                break
-
-        if guild is None or role is None or membro is None:
-            await interaction.response.send_message(
-                "Não consegui encontrar o servidor, cargo ou usuário.",
-                ephemeral=True
-            )
-            return
-
-        try:
-            await membro.add_roles(role, reason="Contrato aceito")
-            salvar_ultimo_contract(membro.id, role.id)
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "Não consegui dar o cargo. Coloque o cargo do bot acima desse cargo.",
-                ephemeral=True
-            )
-            return
-
-        canal = bot.get_channel(CANAL_ACCEPT_ID)
-
-        if canal:
-            embed = discord.Embed(
-                title="Contrato aceito!",
-                description=f"{membro.mention} aceitou o contrato e entrou no time **{role.name}**.",
-                color=discord.Color.green()
-            )
-            await canal.send(embed=embed)
-
-        for item in self.children:
-            item.disabled = True
-
-        await interaction.response.edit_message(
-            content="Você aceitou o contrato e recebeu o cargo!",
-            view=self
-        )
-
-    @discord.ui.button(label="Recusar", style=discord.ButtonStyle.red)
-    async def recusar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.contratado_id:
-            await interaction.response.send_message(
-                "Esse contrato não é para você.",
-                ephemeral=True
-            )
-            return
-
-        for item in self.children:
-            item.disabled = True
-
-        await interaction.response.edit_message(
-            content="Você recusou o contrato.",
-            view=self
-        )
+    return choices[:25]
 
 
-class ReleaseConfirmView(discord.ui.View):
-    def __init__(self, user_id: int, role_id: int):
-        super().__init__(timeout=60)
-        self.user_id = user_id
-        self.role_id = role_id
-
-    @discord.ui.button(label="Confirmar saída", style=discord.ButtonStyle.red)
-    async def confirmar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "Essa confirmação não é para você.",
-                ephemeral=True
-            )
-            return
-
-        guild = interaction.guild
-        membro = interaction.user
-        role = guild.get_role(self.role_id)
-
-        if role is None:
-            await interaction.response.send_message(
-                "Não encontrei o cargo do seu último contract.",
-                ephemeral=True
-            )
-            return
-
-        if role not in membro.roles:
-            remover_ultimo_contract(membro.id)
-            await interaction.response.send_message(
-                "Você não tem mais esse cargo.",
-                ephemeral=True
-            )
-            return
-
-        try:
-            await membro.remove_roles(role, reason="Release confirmado")
-            remover_ultimo_contract(membro.id)
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "Não consegui remover o cargo. Meu cargo precisa estar acima dele.",
-                ephemeral=True
-            )
-            return
-
-        canal = bot.get_channel(CANAL_RELEASE_ID)
-
-        if canal:
-            await canal.send(
-                f"{membro.mention} saiu do time **{role.name}**."
-            )
-
-        for item in self.children:
-            item.disabled = True
-
-        await interaction.response.edit_message(
-            content=f"Você saiu do time **{role.name}**.",
-            view=self
-        )
-
-    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.gray)
-    async def cancelar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "Essa confirmação não é para você.",
-                ephemeral=True
-            )
-            return
-
-        for item in self.children:
-            item.disabled = True
-
-        await interaction.response.edit_message(
-            content="Saída cancelada.",
-            view=self
-        )
+def user_display_without_mention(guild: discord.Guild | None, user_id: str) -> str:
+    member = guild.get_member(int(user_id)) if guild else None
+    if member:
+        return member.name
+    return f"user-{user_id}"
 
 
-@bot.tree.command(name="contract", description="Enviar contrato para um usuário")
-@app_commands.describe(
-    user="Usuário que será contratado",
-    team="Cargo/time que o usuário vai receber"
-)
-async def contract(
-    interaction: discord.Interaction,
-    user: discord.Member,
-    team: discord.Role
-):
-    if not isinstance(interaction.user, discord.Member):
-        await interaction.response.send_message(
-            "Erro ao verificar seus cargos.",
-            ephemeral=True
-        )
-        return
-
-    if not pode_usar_contract(interaction.user):
-        await interaction.response.send_message(
-            "Você não tem permissão para usar esse comando.",
-            ephemeral=True
-        )
-        return
-
-    if team.permissions.administrator:
-        await interaction.response.send_message(
-            "Você não pode usar um cargo com permissão de administrador.",
-            ephemeral=True
-        )
-        return
-
-    if team >= interaction.user.top_role:
-        await interaction.response.send_message(
-            "Você só pode contratar para cargos abaixo do seu maior cargo.",
-            ephemeral=True
-        )
-        return
-
-    bot_member = interaction.guild.me
-
-    if team >= bot_member.top_role:
-        await interaction.response.send_message(
-            "Eu não consigo dar esse cargo. Meu cargo precisa estar acima dele.",
-            ephemeral=True
-        )
-        return
-
+# -----------------------------
+# Embeds
+# -----------------------------
+def success_embed(title: str, description: str):
     embed = discord.Embed(
-        title="Você recebeu um contrato!",
-        description=f"Você foi contratado para o time **{team.name}**.",
-        color=discord.Color.blue()
+        title=title,
+        description=description,
+        color=discord.Color.green()
     )
-
-    embed.add_field(name="Contratante:", value=interaction.user.mention, inline=False)
-    embed.add_field(name="Time:", value=team.mention, inline=False)
-
-    try:
-        await user.send(
-            embed=embed,
-            view=ContractView(user.id, team.id)
-        )
-
-        await interaction.response.send_message(
-            f"Contrato enviado na DM de {user.mention}.",
-            ephemeral=True
-        )
-
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "Não consegui mandar DM para esse usuário. Talvez ele esteja com a DM fechada.",
-            ephemeral=True
-        )
+    embed.set_footer(text="UFA Team System")
+    return embed
 
 
-@bot.tree.command(name="release", description="Sair do último time recebido por contract")
-async def release(interaction: discord.Interaction):
-    role_id = pegar_ultimo_contract(interaction.user.id)
-
-    if role_id is None:
-        await interaction.response.send_message(
-            "Você não tem nenhum contract salvo para sair.",
-            ephemeral=True
-        )
-        return
-
-    role = interaction.guild.get_role(role_id)
-
-    if role is None:
-        remover_ultimo_contract(interaction.user.id)
-        await interaction.response.send_message(
-            "O cargo do seu último contract não existe mais.",
-            ephemeral=True
-        )
-        return
-
-    if role not in interaction.user.roles:
-        remover_ultimo_contract(interaction.user.id)
-        await interaction.response.send_message(
-            "Você não tem mais o cargo do seu último contract.",
-            ephemeral=True
-        )
-        return
-
+def info_embed(title: str, description: str):
     embed = discord.Embed(
-        title="Confirmar release",
-        description=f"Você tem certeza que quer sair do time **{role.name}**?",
+        title=title,
+        description=description,
+        color=discord.Color.blurple()
+    )
+    embed.set_footer(text="UFA Team System")
+    return embed
+
+
+def warning_embed(title: str, description: str):
+    embed = discord.Embed(
+        title=title,
+        description=description,
         color=discord.Color.orange()
     )
+    embed.set_footer(text="UFA Team System")
+    return embed
 
-    await interaction.response.send_message(
-        embed=embed,
-        view=ReleaseConfirmView(interaction.user.id, role.id)
+
+def error_embed(title: str, description: str):
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=discord.Color.red()
+    )
+    embed.set_footer(text="UFA Team System")
+    return embed
+
+
+# -----------------------------
+# Admin Panel
+# -----------------------------
+class AddTeamModal(discord.ui.Modal, title="Add New Team"):
+    club_name = discord.ui.TextInput(
+        label="Team name",
+        placeholder="Example: UFA United",
+        max_length=80
     )
 
+    async def on_submit(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            await interaction.response.send_message(
+                embed=error_embed("Permission denied", "Only administrators can use this panel."),
+                ephemeral=True
+            )
+            return
 
-@bot.tree.command(name="squad", description="Mostrar membros de um cargo/time")
-@app_commands.describe(team="Cargo do time")
-async def squad(
-    interaction: discord.Interaction,
-    team: discord.Role
-):
-    if team.permissions.administrator:
+        name = normalize_name(str(self.club_name))
+        if not name:
+            await interaction.response.send_message(
+                embed=error_embed("Invalid team name", "Please enter a valid team name."),
+                ephemeral=True
+            )
+            return
+
+        _, existing = find_club_by_name(name)
+        if existing:
+            await interaction.response.send_message(
+                embed=error_embed("Team already exists", f"**{name}** is already registered."),
+                ephemeral=True
+            )
+            return
+
+        data = load_clubs()
+        club_id = make_club_id(name)
+        data["clubs"][club_id] = {
+            "name": name,
+            "managers": [],
+            "players": []
+        }
+        save_clubs(data)
+
         await interaction.response.send_message(
-            "Você não pode selecionar um cargo com permissão de administrador.",
+            embed=success_embed("Team created", f"**{name}** has been added successfully."),
+            ephemeral=True
+        )
+
+
+class ManagerUserSelect(discord.ui.UserSelect):
+    def __init__(self, club_id: str):
+        super().__init__(
+            placeholder="Select the manager",
+            min_values=1,
+            max_values=1
+        )
+        self.club_id = club_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            await interaction.response.send_message(
+                embed=error_embed("Permission denied", "Only administrators can add managers."),
+                ephemeral=True
+            )
+            return
+
+        selected_user = self.values[0]
+        data = load_clubs()
+        club = data["clubs"].get(self.club_id)
+
+        if club is None:
+            await interaction.response.send_message(
+                embed=error_embed("Team not found", "This team no longer exists."),
+                ephemeral=True
+            )
+            return
+
+        user_key = str(selected_user.id)
+        if user_key not in club["managers"]:
+            club["managers"].append(user_key)
+            save_clubs(data)
+
+        await interaction.response.send_message(
+            embed=success_embed(
+                "Manager added",
+                f"{selected_user.mention} can now manage **{club['name']}**."
+            ),
+            ephemeral=True
+        )
+
+
+class ManagerUserSelectView(discord.ui.View):
+    def __init__(self, club_id: str):
+        super().__init__(timeout=120)
+        self.add_item(ManagerUserSelect(club_id))
+
+
+class TeamSelectForManager(discord.ui.Select):
+    def __init__(self):
+        data = load_clubs()
+        options = []
+
+        for club_id, club in data["clubs"].items():
+            options.append(
+                discord.SelectOption(
+                    label=club["name"][:100],
+                    value=club_id,
+                    description="Add a manager to this team"
+                )
+            )
+
+        if not options:
+            options.append(
+                discord.SelectOption(
+                    label="No teams available",
+                    value="none",
+                    description="Create a team first"
+                )
+            )
+
+        super().__init__(
+            placeholder="Select a team",
+            min_values=1,
+            max_values=1,
+            options=options[:25]
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            await interaction.response.send_message(
+                embed=error_embed("Permission denied", "Only administrators can use this menu."),
+                ephemeral=True
+            )
+            return
+
+        club_id = self.values[0]
+        if club_id == "none":
+            await interaction.response.send_message(
+                embed=warning_embed("No teams found", "Create a team first using **Add New Team**."),
+                ephemeral=True
+            )
+            return
+
+        club = get_club_by_id(club_id)
+        await interaction.response.send_message(
+            embed=info_embed(
+                "Select manager",
+                f"Choose the Discord user who will manage **{club['name']}**."
+            ),
+            view=ManagerUserSelectView(club_id),
+            ephemeral=True
+        )
+
+
+class TeamSelectForManagerView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.add_item(TeamSelectForManager())
+
+
+class AdminPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="Add New Team", style=discord.ButtonStyle.green)
+    async def add_new_team(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_admin(interaction):
+            await interaction.response.send_message(
+                embed=error_embed("Permission denied", "Only administrators can use this panel."),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_modal(AddTeamModal())
+
+    @discord.ui.button(label="Add New Manager", style=discord.ButtonStyle.blurple)
+    async def add_new_manager(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_admin(interaction):
+            await interaction.response.send_message(
+                embed=error_embed("Permission denied", "Only administrators can use this panel."),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            embed=info_embed("Choose a team", "Select the team that will receive a new manager."),
+            view=TeamSelectForManagerView(),
+            ephemeral=True
+        )
+
+
+# -----------------------------
+# Contract / Release Views
+# -----------------------------
+class ContractView(discord.ui.View):
+    def __init__(self, contratado_id: int, club_id: str, manager_id: int):
+        super().__init__(timeout=None)
+        self.contratado_id = contratado_id
+        self.club_id = club_id
+        self.manager_id = manager_id
+
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.green)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.contratado_id:
+            await interaction.response.send_message(
+                embed=error_embed("Not your contract", "This contract was not sent to you."),
+                ephemeral=True
+            )
+            return
+
+        club = get_club_by_id(self.club_id)
+        if club is None:
+            await interaction.response.send_message(
+                embed=error_embed("Team not found", "This team no longer exists."),
+                ephemeral=True
+            )
+            return
+
+        add_player_to_club(interaction.user.id, self.club_id)
+
+        channel = bot.get_channel(CANAL_ACCEPT_ID)
+        if channel:
+            await channel.send(
+                embed=success_embed(
+                    "Contract accepted",
+                    f"{interaction.user.mention} has joined **{club['name']}**."
+                )
+            )
+
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            embed=success_embed("Contract accepted", f"You are now a player for **{club['name']}**."),
+            view=self
+        )
+
+    @discord.ui.button(label="Decline", style=discord.ButtonStyle.red)
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.contratado_id:
+            await interaction.response.send_message(
+                embed=error_embed("Not your contract", "This contract was not sent to you."),
+                ephemeral=True
+            )
+            return
+
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            embed=warning_embed("Contract declined", "You declined this contract offer."),
+            view=self
+        )
+
+
+class SelfReleaseConfirmView(discord.ui.View):
+    def __init__(self, user_id: int, club_id: str):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.club_id = club_id
+
+    @discord.ui.button(label="Confirm Release", style=discord.ButtonStyle.red)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                embed=error_embed("Not your confirmation", "This confirmation is not for you."),
+                ephemeral=True
+            )
+            return
+
+        club = get_club_by_id(self.club_id)
+        if club is None:
+            await interaction.response.send_message(
+                embed=error_embed("Team not found", "This team no longer exists."),
+                ephemeral=True
+            )
+            return
+
+        removed = remove_player_from_club(interaction.user.id, self.club_id)
+        if not removed:
+            await interaction.response.send_message(
+                embed=warning_embed("Not in team", f"You are not listed in **{club['name']}**."),
+                ephemeral=True
+            )
+            return
+
+        channel = bot.get_channel(CANAL_RELEASE_ID)
+        if channel:
+            await channel.send(
+                embed=warning_embed(
+                    "Player released",
+                    f"{interaction.user.mention} has left **{club['name']}**."
+                )
+            )
+
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            embed=success_embed("Released", f"You left **{club['name']}**."),
+            view=self
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.gray)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                embed=error_embed("Not your confirmation", "This confirmation is not for you."),
+                ephemeral=True
+            )
+            return
+
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            embed=warning_embed("Cancelled", "Release cancelled."),
+            view=self
+        )
+
+
+# -----------------------------
+# Slash Commands
+# -----------------------------
+@bot.tree.command(name="painel", description="Open the admin team management panel")
+async def painel(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message(
+            embed=error_embed("Permission denied", "Only administrators can use this command."),
             ephemeral=True
         )
         return
 
-    membros = team.members
-
-    if not membros:
-        lista = "Nenhum usuário encontrado nesse cargo."
-    else:
-        lista = "\n".join(
-            [f"P: {membro.mention} Class D" for membro in membros]
-        )
-
-    embed = discord.Embed(
-        title=f"SquadSheet of {team.name}",
-        description=lista,
-        color=discord.Color.purple()
+    embed = info_embed(
+        "Team Management Panel",
+        "Use the buttons below to create teams and assign managers."
     )
+    embed.add_field(name="Add New Team", value="Create a new club/team.", inline=False)
+    embed.add_field(name="Add New Manager", value="Choose a team and assign a Discord user as manager.", inline=False)
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, view=AdminPanelView(), ephemeral=True)
 
 
-@bot.tree.command(name="freeagency", description="Enviar uma mensagem de Free Agency")
-@app_commands.describe(
-    message="Mensagem da sua free agency",
-    position="Sua posição"
-)
-async def freeagency(
-    interaction: discord.Interaction,
-    message: str,
-    position: str
-):
-    canal = bot.get_channel(CANAL_FREEAGENCY_ID)
+@bot.tree.command(name="contract", description="Send a contract offer to a player")
+@app_commands.describe(user="Player who will receive the contract")
+async def contract(interaction: discord.Interaction, user: discord.Member):
+    manager_clubs = get_user_clubs(interaction.user.id)
 
-    if canal is None:
+    if not manager_clubs:
         await interaction.response.send_message(
-            "Não consegui encontrar o canal de Free Agency.",
+            embed=error_embed("Permission denied", "You are not registered as a manager for any team."),
             ephemeral=True
         )
         return
 
-    embed = discord.Embed(
-        title="New Free agency!",
-        color=discord.Color.blue()
-    )
+    if len(manager_clubs) > 1:
+        team_list = "\n".join(f"- {club['name']}" for _, club in manager_clubs)
+        await interaction.response.send_message(
+            embed=warning_embed(
+                "Multiple teams found",
+                f"You manage more than one team. Ask an admin to keep only one active team for you.\n\n{team_list}"
+            ),
+            ephemeral=True
+        )
+        return
 
-    embed.add_field(
-        name="User:",
-        value=interaction.user.mention,
-        inline=False
-    )
+    club_id, club = manager_clubs[0]
 
-    embed.add_field(
-        name="Message:",
-        value=message,
-        inline=False
-    )
+    if str(user.id) in club.get("players", []):
+        await interaction.response.send_message(
+            embed=warning_embed("Already signed", f"{user.mention} is already listed in **{club['name']}**."),
+            ephemeral=True
+        )
+        return
 
-    embed.add_field(
-        name="Position:",
-        value=position,
-        inline=False
+    embed = info_embed(
+        "Contract Offer",
+        f"You have received a contract offer from **{club['name']}**."
     )
+    embed.add_field(name="Manager", value=interaction.user.mention, inline=False)
+    embed.add_field(name="Team", value=club["name"], inline=False)
 
-    embed.set_footer(text="Powered by UFA Team")
+    try:
+        await user.send(embed=embed, view=ContractView(user.id, club_id, interaction.user.id))
+        await interaction.response.send_message(
+            embed=success_embed("Contract sent", f"The contract was sent to {user.mention}'s DM."),
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            embed=error_embed(
+                "DM failed",
+                "I could not send a DM to this user. They may have direct messages disabled."
+            ),
+            ephemeral=True
+        )
 
-    await canal.send(
-        content=interaction.user.mention,
-        embed=embed
-    )
+
+@bot.tree.command(name="release", description="Leave your current team")
+async def release(interaction: discord.Interaction):
+    club_id, club = get_player_club(interaction.user.id)
+
+    if club is None:
+        await interaction.response.send_message(
+            embed=warning_embed("No team found", "You are not listed in any team."),
+            ephemeral=True
+        )
+        return
 
     await interaction.response.send_message(
-        "Free agency enviada com sucesso.",
+        embed=warning_embed("Confirm release", f"Do you want to leave **{club['name']}**?"),
+        view=SelfReleaseConfirmView(interaction.user.id, club_id),
         ephemeral=True
     )
 
 
-@bot.tree.command(name="ufadaily", description="Claim your daily UFA coins")
-async def ufadaily(interaction: discord.Interaction):
-    today = date.today().isoformat()
-    last_daily = pegar_ultimo_daily(interaction.user.id)
+@bot.tree.command(name="releplayer", description="Release a player from your team")
+@app_commands.describe(user="Player to remove from your team")
+async def releplayer(interaction: discord.Interaction, user: discord.Member):
+    manager_clubs = get_user_clubs(interaction.user.id)
 
-    if last_daily == today:
+    if not manager_clubs:
         await interaction.response.send_message(
-            "You already claimed your daily UFA coins today. Come back tomorrow!",
+            embed=error_embed("Permission denied", "You are not registered as a manager for any team."),
             ephemeral=True
         )
         return
 
-    reward = gerar_daily_reward()
-    new_balance = adicionar_user_coins(interaction.user.id, reward)
-    setar_ultimo_daily(interaction.user.id)
-
-    await interaction.response.send_message(
-        f"You received **{reward} UFA coins**!\n"
-        f"Your current balance is **{new_balance} UFA coins**."
-    )
-
-
-@bot.tree.command(name="ufabank", description="Check your UFA coins balance")
-async def ufabank(interaction: discord.Interaction):
-    balance = pegar_user_coins(interaction.user.id)
-
-    await interaction.response.send_message(
-        f"You have **{balance} UFA coins**."
-    )
-
-
-@bot.tree.command(name="ufabet", description="Bet your UFA coins")
-@app_commands.describe(amount="Amount of UFA coins you want to bet")
-async def ufabet(interaction: discord.Interaction, amount: int):
-    if amount <= 0:
+    if len(manager_clubs) > 1:
         await interaction.response.send_message(
-            "The bet amount must be greater than 0.",
+            embed=warning_embed("Multiple teams found", "You manage more than one team. Keep only one active team per manager."),
             ephemeral=True
         )
         return
 
-    balance = pegar_user_coins(interaction.user.id)
+    club_id, club = manager_clubs[0]
 
-    if balance < amount:
+    if str(user.id) not in club.get("players", []):
         await interaction.response.send_message(
-            f"You do not have enough UFA coins. Your balance is **{balance} UFA coins**.",
+            embed=warning_embed("Player not found", f"{user.mention} is not listed in **{club['name']}**."),
             ephemeral=True
         )
         return
 
-    setar_user_coins(interaction.user.id, balance - amount)
+    remove_player_from_club(user.id, club_id)
 
-    numbers = random.sample(range(1, 100), 9)
-    correct_numbers = set(random.sample(numbers, 3))
-    numbers_text = " | ".join(f"`{number}`" for number in numbers)
+    channel = bot.get_channel(CANAL_RELEASE_ID)
+    if channel:
+        await channel.send(
+            embed=warning_embed(
+                "Player released",
+                f"{user.mention} was released from **{club['name']}** by {interaction.user.mention}."
+            )
+        )
 
     await interaction.response.send_message(
-        "Pick one number. There are **3 winning numbers** and **6 losing numbers**.\n"
-        f"Bet amount: **{amount} UFA coins**\n"
-        f"Numbers: {numbers_text}",
-        view=UfaBetView(interaction.user.id, amount, correct_numbers, numbers)
+        embed=success_embed("Player released", f"{user.mention} was removed from **{club['name']}**."),
+        ephemeral=True
     )
 
 
+@bot.tree.command(name="squad", description="Show the players from a team")
+@app_commands.describe(club="Team name")
+@app_commands.autocomplete(club=club_autocomplete)
+async def squad(interaction: discord.Interaction, club: str):
+    selected_club = get_club_by_id(club)
 
-@bot.tree.command(name="ufaleaderboard", description="Show the richest UFA coins users")
-async def ufaleaderboard(interaction: discord.Interaction):
-    data = carregar_coins()
+    if selected_club is None:
+        _, selected_club = find_club_by_name(club)
 
-    ranking = []
-    for user_id, user_data in data.items():
-        coins = int(user_data.get("coins", 0))
-        if coins > 0:
-            ranking.append((int(user_id), coins))
-
-    ranking.sort(key=lambda item: item[1], reverse=True)
-    top_users = ranking[:10]
-
-    if not top_users:
+    if selected_club is None:
         await interaction.response.send_message(
-            "No one has UFA coins yet."
+            embed=error_embed("Team not found", "No team was found with that name."),
+            ephemeral=True
         )
         return
 
-    medals = ["🥇", "🥈", "🥉"]
-    lines = []
+    players = selected_club.get("players", [])
 
-    for index, (user_id, coins) in enumerate(top_users, start=1):
-        medal = medals[index - 1] if index <= 3 else f"**#{index}**"
-        member = interaction.guild.get_member(user_id) if interaction.guild else None
-        user_display = member.mention if member else f"User `{user_id}`"
-        lines.append(f"{medal} {user_display} — **{coins} UFA coins**")
+    if not players:
+        description = "No players listed yet."
+    else:
+        description = "\n".join(
+            user_display_without_mention(interaction.guild, user_id)
+            for user_id in players
+        )
 
     embed = discord.Embed(
-        title="UFA Coins Leaderboard",
-        description="\n".join(lines),
-        color=discord.Color.gold()
+        title=f"Squadsheet of club #{selected_club['name']}",
+        description=description,
+        color=discord.Color.purple()
     )
-    embed.set_footer(text="Top 10 richest users")
+    embed.set_footer(text="UFA Team System")
 
     await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="freeagency", description="Post a free agency message")
+@app_commands.describe(
+    message="Your free agency message",
+    position="Your position"
+)
+async def freeagency(interaction: discord.Interaction, message: str, position: str):
+    channel = bot.get_channel(CANAL_FREEAGENCY_ID)
+
+    if channel is None:
+        await interaction.response.send_message(
+            embed=error_embed("Channel not found", "I could not find the Free Agency channel."),
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="New Free Agency",
+        description="A player is looking for a team.",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Player", value=interaction.user.mention, inline=False)
+    embed.add_field(name="Position", value=position, inline=True)
+    embed.add_field(name="Message", value=message, inline=False)
+    embed.set_footer(text="UFA Team System")
+
+    await channel.send(content=interaction.user.mention, embed=embed)
+
+    await interaction.response.send_message(
+        embed=success_embed("Free agency posted", "Your free agency message was posted successfully."),
+        ephemeral=True
+    )
 
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"Online como {bot.user}")
+    print(f"Online as {bot.user}")
 
 
 bot.run(TOKEN)
