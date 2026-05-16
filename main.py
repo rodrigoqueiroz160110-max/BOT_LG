@@ -1,4 +1,3 @@
-```python
 import os
 import json
 import discord
@@ -428,4 +427,3 @@ async def on_ready():
 
 
 bot.run(TOKEN)
-```
