@@ -1,5 +1,7 @@
 import os
 import json
+import random
+from datetime import date
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -19,6 +21,7 @@ CANAL_RELEASE_ID = 1503241512819888129
 CANAL_FREEAGENCY_ID = 1503241510320341134
 
 CONTRACTS_FILE = "contracts.json"
+COINS_FILE = "ufa_coins.json"
 
 intents = discord.Intents.default()
 intents.members = True
@@ -56,8 +59,136 @@ def remover_ultimo_contract(user_id: int):
     salvar_contracts(data)
 
 
+def carregar_coins():
+    if not os.path.exists(COINS_FILE):
+        return {}
+
+    with open(COINS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def salvar_coins(data):
+    with open(COINS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+
+def pegar_user_coins(user_id: int):
+    data = carregar_coins()
+    user_data = data.get(str(user_id), {})
+    return int(user_data.get("coins", 0))
+
+
+def setar_user_coins(user_id: int, coins: int):
+    data = carregar_coins()
+    user_key = str(user_id)
+
+    if user_key not in data:
+        data[user_key] = {}
+
+    data[user_key]["coins"] = max(0, int(coins))
+    salvar_coins(data)
+
+
+def adicionar_user_coins(user_id: int, amount: int):
+    saldo_atual = pegar_user_coins(user_id)
+    novo_saldo = saldo_atual + amount
+    setar_user_coins(user_id, novo_saldo)
+    return novo_saldo
+
+
+def pegar_ultimo_daily(user_id: int):
+    data = carregar_coins()
+    user_data = data.get(str(user_id), {})
+    return user_data.get("last_daily")
+
+
+def setar_ultimo_daily(user_id: int):
+    data = carregar_coins()
+    user_key = str(user_id)
+
+    if user_key not in data:
+        data[user_key] = {}
+
+    data[user_key]["last_daily"] = date.today().isoformat()
+    salvar_coins(data)
+
+
+def gerar_daily_reward():
+    chance = random.random()
+
+    if chance < 0.40:
+        return random.randint(100, 400)
+
+    if chance < 0.60:
+        return random.randint(500, 2000)
+
+    if chance < 0.68:
+        return random.randint(2001, 5000)
+
+    return random.randint(50, 99)
+
+
 def pode_usar_contract(member: discord.Member):
     return any(role.id in CARGOS_CONTRACT for role in member.roles)
+
+
+class UfaBetView(discord.ui.View):
+    def __init__(self, user_id: int, amount: int, correct_numbers: set[int], numbers: list[int]):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.amount = amount
+        self.correct_numbers = correct_numbers
+
+        for number in numbers:
+            button = discord.ui.Button(
+                label=str(number),
+                style=discord.ButtonStyle.blurple
+            )
+            button.callback = self.create_callback(number)
+            self.add_item(button)
+
+    def create_callback(self, number: int):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message(
+                    "This bet is not for you.",
+                    ephemeral=True
+                )
+                return
+
+            for item in self.children:
+                item.disabled = True
+
+            if number in self.correct_numbers:
+                winnings = self.amount * 2
+                new_balance = adicionar_user_coins(self.user_id, winnings)
+
+                await interaction.response.edit_message(
+                    content=(
+                        f"Correct number: **{number}**!\n"
+                        f"You won **{winnings} UFA coins**.\n"
+                        f"Your new balance is **{new_balance} UFA coins**."
+                    ),
+                    view=self
+                )
+            else:
+                new_balance = pegar_user_coins(self.user_id)
+
+                await interaction.response.edit_message(
+                    content=(
+                        f"Wrong number: **{number}**.\n"
+                        f"You lost **{self.amount} UFA coins**.\n"
+                        f"Your new balance is **{new_balance} UFA coins**."
+                    ),
+                    view=self
+                )
+
+        return callback
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
 
 
 class ContractView(discord.ui.View):
@@ -418,6 +549,71 @@ async def freeagency(
         "Free agency enviada com sucesso.",
         ephemeral=True
     )
+
+
+@bot.tree.command(name="ufadaily", description="Claim your daily UFA coins")
+async def ufadaily(interaction: discord.Interaction):
+    today = date.today().isoformat()
+    last_daily = pegar_ultimo_daily(interaction.user.id)
+
+    if last_daily == today:
+        await interaction.response.send_message(
+            "You already claimed your daily UFA coins today. Come back tomorrow!",
+            ephemeral=True
+        )
+        return
+
+    reward = gerar_daily_reward()
+    new_balance = adicionar_user_coins(interaction.user.id, reward)
+    setar_ultimo_daily(interaction.user.id)
+
+    await interaction.response.send_message(
+        f"You received **{reward} UFA coins**!\n"
+        f"Your current balance is **{new_balance} UFA coins**."
+    )
+
+
+@bot.tree.command(name="ufabank", description="Check your UFA coins balance")
+async def ufabank(interaction: discord.Interaction):
+    balance = pegar_user_coins(interaction.user.id)
+
+    await interaction.response.send_message(
+        f"You have **{balance} UFA coins**."
+    )
+
+
+@bot.tree.command(name="ufabet", description="Bet your UFA coins")
+@app_commands.describe(amount="Amount of UFA coins you want to bet")
+async def ufabet(interaction: discord.Interaction, amount: int):
+    if amount <= 0:
+        await interaction.response.send_message(
+            "The bet amount must be greater than 0.",
+            ephemeral=True
+        )
+        return
+
+    balance = pegar_user_coins(interaction.user.id)
+
+    if balance < amount:
+        await interaction.response.send_message(
+            f"You do not have enough UFA coins. Your balance is **{balance} UFA coins**.",
+            ephemeral=True
+        )
+        return
+
+    setar_user_coins(interaction.user.id, balance - amount)
+
+    numbers = random.sample(range(1, 100), 9)
+    correct_numbers = set(random.sample(numbers, 3))
+    numbers_text = " | ".join(f"`{number}`" for number in numbers)
+
+    await interaction.response.send_message(
+        "Pick one number. There are **3 winning numbers** and **6 losing numbers**.\n"
+        f"Bet amount: **{amount} UFA coins**\n"
+        f"Numbers: {numbers_text}",
+        view=UfaBetView(interaction.user.id, amount, correct_numbers, numbers)
+    )
+
 
 
 @bot.event
