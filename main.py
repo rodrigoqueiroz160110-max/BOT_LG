@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import discord
@@ -16,6 +17,7 @@ CARGOS_CONTRACT = [
 
 CANAL_ACCEPT_ID = 1503241511696076831
 CANAL_RELEASE_ID = 1503241512819888129
+CANAL_FREEAGENCY_ID = 1503241510320341134
 
 CONTRACTS_FILE = "contracts.json"
 
@@ -270,6 +272,7 @@ async def contract(
         description=f"Você foi contratado para o time **{team.name}**.",
         color=discord.Color.blue()
     )
+
     embed.add_field(name="Contratante:", value=interaction.user.mention, inline=False)
     embed.add_field(name="Time:", value=team.mention, inline=False)
 
@@ -363,6 +366,61 @@ async def squad(
     await interaction.response.send_message(embed=embed)
 
 
+@bot.tree.command(name="freeagency", description="Enviar uma mensagem de Free Agency")
+@app_commands.describe(
+    message="Mensagem da sua free agency",
+    position="Sua posição"
+)
+async def freeagency(
+    interaction: discord.Interaction,
+    message: str,
+    position: str
+):
+    canal = bot.get_channel(CANAL_FREEAGENCY_ID)
+
+    if canal is None:
+        await interaction.response.send_message(
+            "Não consegui encontrar o canal de Free Agency.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="New Free agency!",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="User:",
+        value=interaction.user.mention,
+        inline=False
+    )
+
+    embed.add_field(
+        name="Message:",
+        value=message,
+        inline=False
+    )
+
+    embed.add_field(
+        name="Position:",
+        value=position,
+        inline=False
+    )
+
+    embed.set_footer(text="Powered by UFA Team")
+
+    await canal.send(
+        content=interaction.user.mention,
+        embed=embed
+    )
+
+    await interaction.response.send_message(
+        "Free agency enviada com sucesso.",
+        ephemeral=True
+    )
+
+
 @bot.event
 async def on_ready():
     await bot.tree.sync()
@@ -370,3 +428,4 @@ async def on_ready():
 
 
 bot.run(TOKEN)
+```
