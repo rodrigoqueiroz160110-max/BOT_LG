@@ -616,6 +616,44 @@ async def ufabet(interaction: discord.Interaction, amount: int):
 
 
 
+@bot.tree.command(name="ufaleaderboard", description="Show the richest UFA coins users")
+async def ufaleaderboard(interaction: discord.Interaction):
+    data = carregar_coins()
+
+    ranking = []
+    for user_id, user_data in data.items():
+        coins = int(user_data.get("coins", 0))
+        if coins > 0:
+            ranking.append((int(user_id), coins))
+
+    ranking.sort(key=lambda item: item[1], reverse=True)
+    top_users = ranking[:10]
+
+    if not top_users:
+        await interaction.response.send_message(
+            "No one has UFA coins yet."
+        )
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+
+    for index, (user_id, coins) in enumerate(top_users, start=1):
+        medal = medals[index - 1] if index <= 3 else f"**#{index}**"
+        member = interaction.guild.get_member(user_id) if interaction.guild else None
+        user_display = member.mention if member else f"User `{user_id}`"
+        lines.append(f"{medal} {user_display} — **{coins} UFA coins**")
+
+    embed = discord.Embed(
+        title="UFA Coins Leaderboard",
+        description="\n".join(lines),
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text="Top 10 richest users")
+
+    await interaction.response.send_message(embed=embed)
+
+
 @bot.event
 async def on_ready():
     await bot.tree.sync()
