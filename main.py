@@ -1,6 +1,7 @@
 import os
 import json
 from typing import Optional
+from datetime import datetime
 
 import discord
 from discord.ext import commands
@@ -96,27 +97,35 @@ def is_admin(interaction: discord.Interaction) -> bool:
     )
 
 
+def get_member_name(guild: Optional[discord.Guild], user_id: int) -> str:
+    if guild:
+        member = guild.get_member(user_id)
+        if member:
+            return member.name
+    return f"User-{user_id}"
+
+
 # -----------------------------
 # Panel modals/views
 # -----------------------------
 
 class AddTeamModal(discord.ui.Modal, title="Add New Team"):
     club_name = discord.ui.TextInput(
-        label="Team name",
+        label="Team Name",
         placeholder="Example: Thunder FC",
         max_length=60
     )
 
     async def on_submit(self, interaction: discord.Interaction):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
 
         data = load_clubs()
         key = normalize_club_name(str(self.club_name))
 
         if key in data["clubs"]:
-            await interaction.response.send_message("This team already exists.", ephemeral=True)
+            await interaction.response.send_message("A team with this name already exists.", ephemeral=True)
             return
 
         data["clubs"][key] = {
@@ -128,9 +137,9 @@ class AddTeamModal(discord.ui.Modal, title="Add New Team"):
 
         embed = make_embed(
             "Team Created",
-            f"**{str(self.club_name).strip()}** has been added successfully.",
+            f"Team **{str(self.club_name).strip()}** has been successfully added to the database.",
             discord.Color.teal(),
-            "Admin Panel"
+            "Administrator Action"
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -145,21 +154,21 @@ class RemoveTeamSelect(discord.ui.Select):
                 discord.SelectOption(
                     label=club.get("name", club_key),
                     value=club_key,
-                    description="Delete this team permanently"
+                    description="Permanently delete this team"
                 )
             )
 
         if not options:
             options = [
                 discord.SelectOption(
-                    label="No teams found",
+                    label="No Teams Available",
                     value="none",
-                    description="No teams available"
+                    description="There are no teams to remove"
                 )
             ]
 
         super().__init__(
-            placeholder="Select the team to remove",
+            placeholder="Select team to delete",
             min_values=1,
             max_values=1,
             options=options[:25],
@@ -168,7 +177,7 @@ class RemoveTeamSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
 
         club_key = self.values[0]
@@ -177,7 +186,7 @@ class RemoveTeamSelect(discord.ui.Select):
         club = data["clubs"].get(club_key)
 
         if not club:
-            await interaction.response.send_message("Team not found.", ephemeral=True)
+            await interaction.response.send_message("Team not found in the database.", ephemeral=True)
             return
 
         team_name = club.get("name", club_key)
@@ -187,9 +196,9 @@ class RemoveTeamSelect(discord.ui.Select):
 
         embed = make_embed(
             "Team Removed",
-            f"**{team_name}** has been removed successfully.",
+            f"Team **{team_name}** has been permanently deleted from the database.",
             discord.Color.red(),
-            "Admin Panel"
+            "Administrator Action"
         )
         await interaction.response.edit_message(embed=embed, view=None)
 
@@ -216,7 +225,7 @@ class AddManagerSelect(discord.ui.Select):
             )
 
         super().__init__(
-            placeholder="Select the team for this manager",
+            placeholder="Select team for this manager",
             min_values=1,
             max_values=1,
             options=options[:25]
@@ -224,7 +233,7 @@ class AddManagerSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
 
         data = load_clubs()
@@ -232,7 +241,7 @@ class AddManagerSelect(discord.ui.Select):
         club = data["clubs"].get(club_key)
 
         if not club:
-            await interaction.response.send_message("Team not found.", ephemeral=True)
+            await interaction.response.send_message("Team not found in the database.", ephemeral=True)
             return
 
         managers = club.setdefault("managers", [])
@@ -242,9 +251,9 @@ class AddManagerSelect(discord.ui.Select):
 
         embed = make_embed(
             "Manager Added",
-            f"{self.target_user.mention} is now a manager of **{club['name']}**.",
+            f"{self.target_user.mention} has been granted manager permissions for **{club['name']}**.",
             discord.Color.green(),
-            "This manager can now send contracts and release players."
+            "Administrator Action"
         )
         await interaction.response.edit_message(embed=embed, view=None)
 
@@ -261,15 +270,15 @@ class RemoveManagerSelect(discord.ui.Select):
                     discord.SelectOption(
                         label=club.get("name", club_key),
                         value=club_key,
-                        description="Remove manager permission from this team"
+                        description="Remove manager permissions from this team"
                     )
                 )
 
         if not options:
-            options = [discord.SelectOption(label="No teams found", value="none", description="This user is not a manager")]
+            options = [discord.SelectOption(label="No Teams Found", value="none", description="This user is not a manager for any team")]
 
         super().__init__(
-            placeholder="Select the team to remove this manager from",
+            placeholder="Select team to remove this manager from",
             min_values=1,
             max_values=1,
             options=options[:25],
@@ -278,7 +287,7 @@ class RemoveManagerSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
 
         data = load_clubs()
@@ -286,7 +295,7 @@ class RemoveManagerSelect(discord.ui.Select):
         club = data["clubs"].get(club_key)
 
         if not club:
-            await interaction.response.send_message("Team not found.", ephemeral=True)
+            await interaction.response.send_message("Team not found in the database.", ephemeral=True)
             return
 
         managers = club.setdefault("managers", [])
@@ -296,9 +305,9 @@ class RemoveManagerSelect(discord.ui.Select):
 
         embed = make_embed(
             "Manager Removed",
-            f"{self.target_user.mention} is no longer a manager of **{club['name']}**.",
+            f"{self.target_user.mention} has lost manager permissions for **{club['name']}**.",
             discord.Color.orange(),
-            "This user can no longer send contracts for this team."
+            "Administrator Action"
         )
         await interaction.response.edit_message(embed=embed, view=None)
 
@@ -306,38 +315,38 @@ class RemoveManagerSelect(discord.ui.Select):
 class ManagerUserSelect(discord.ui.UserSelect):
     def __init__(self, mode: str):
         self.mode = mode
-        placeholder = "Select the new manager" if mode == "add" else "Select the manager to remove"
+        placeholder = "Select the user to add as manager" if mode == "add" else "Select the manager to remove"
         super().__init__(placeholder=placeholder, min_values=1, max_values=1)
 
     async def callback(self, interaction: discord.Interaction):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
 
         target_user = self.values[0]
         if not isinstance(target_user, discord.Member):
-            await interaction.response.send_message("Please select a server member.", ephemeral=True)
+            await interaction.response.send_message("Please select a valid server member.", ephemeral=True)
             return
 
         data = load_clubs()
         if not data["clubs"]:
-            await interaction.response.send_message("Create a team first.", ephemeral=True)
+            await interaction.response.send_message("Please create at least one team first using the Add Team button.", ephemeral=True)
             return
 
         view = discord.ui.View(timeout=120)
         if self.mode == "add":
             view.add_item(AddManagerSelect(target_user))
-            title = "Choose Manager Team"
-            description = f"Select which team {target_user.mention} will manage."
+            title = "Assign Manager Role"
+            description = f"Select which team {target_user.mention} will be assigned to manage."
             color = discord.Color.blurple()
         else:
             view.add_item(RemoveManagerSelect(target_user))
-            title = "Remove Manager"
+            title = "Revoke Manager Role"
             description = f"Select which team {target_user.mention} should be removed from."
             color = discord.Color.orange()
 
         await interaction.response.edit_message(
-            embed=make_embed(title, description, color, "Admin Panel"),
+            embed=make_embed(title, description, color, "Administrator Action"),
             view=view
         )
 
@@ -355,49 +364,49 @@ class AdminPanelView(discord.ui.View):
     @discord.ui.button(label="Add New Team", style=discord.ButtonStyle.green)
     async def add_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
         await interaction.response.send_modal(AddTeamModal())
 
     @discord.ui.button(label="Remove Team", style=discord.ButtonStyle.danger)
     async def remove_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
 
         embed = make_embed(
             "Remove Team",
-            "Select the team you want to delete permanently.",
+            "Select the team you wish to permanently delete from the database.",
             discord.Color.red(),
-            "Admin Panel"
+            "Administrator Action"
         )
         await interaction.response.send_message(embed=embed, view=RemoveTeamView(), ephemeral=True)
 
     @discord.ui.button(label="Add New Manager", style=discord.ButtonStyle.blurple)
     async def add_manager(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
 
         embed = make_embed(
             "Add New Manager",
-            "Select the Discord user who will manage a team.",
+            "Select the Discord user who will be granted manager permissions for a team.",
             discord.Color.blurple(),
-            "Admin Panel"
+            "Administrator Action"
         )
         await interaction.response.send_message(embed=embed, view=ManagerUserSelectView("add"), ephemeral=True)
 
     @discord.ui.button(label="Remove Manager", style=discord.ButtonStyle.red)
     async def remove_manager(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction):
-            await interaction.response.send_message("Only administrators can use this.", ephemeral=True)
+            await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
 
         embed = make_embed(
             "Remove Manager",
-            "Select the Discord user who should lose manager permissions.",
+            "Select the Discord user who should lose their manager permissions.",
             discord.Color.red(),
-            "Admin Panel"
+            "Administrator Action"
         )
         await interaction.response.send_message(embed=embed, view=ManagerUserSelectView("remove"), ephemeral=True)
 
@@ -416,28 +425,28 @@ class ContractView(discord.ui.View):
     @discord.ui.button(label="Accept Contract", style=discord.ButtonStyle.green)
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.player_id:
-            await interaction.response.send_message("This contract is not for you.", ephemeral=True)
+            await interaction.response.send_message("You are not the intended recipient of this contract offer.", ephemeral=True)
             return
 
         data = load_clubs()
         club = data["clubs"].get(self.club_key)
 
         if not club:
-            await interaction.response.send_message("This team no longer exists.", ephemeral=True)
+            await interaction.response.send_message("The team associated with this contract no longer exists.", ephemeral=True)
             return
 
         if self.manager_id not in club.get("managers", []):
-            await interaction.response.send_message("This manager no longer has permission for this team.", ephemeral=True)
+            await interaction.response.send_message("The manager who sent this contract no longer has permissions for this team.", ephemeral=True)
             return
 
         if len(club.get("players", [])) >= MAX_PLAYERS_PER_CLUB:
-            await interaction.response.send_message("This team is full: 16/16 players.", ephemeral=True)
+            await interaction.response.send_message(f"This team has reached the maximum capacity of {MAX_PLAYERS_PER_CLUB} players.", ephemeral=True)
             return
 
         old_club_key, old_club = find_player_club(self.player_id)
         if old_club_key and old_club_key != self.club_key:
             await interaction.response.send_message(
-                f"You are already signed to **{old_club.get('name', old_club_key)}**.",
+                f"You are already signed to **{old_club.get('name', old_club_key)}**. You must leave your current team before joining another.",
                 ephemeral=True
             )
             return
@@ -449,15 +458,15 @@ class ContractView(discord.ui.View):
 
         guild = bot.guilds[0] if bot.guilds else None
         member = guild.get_member(self.player_id) if guild else None
-        player_text = member.mention if member else f"User `{self.player_id}`"
+        player_text = member.mention if member else f"User-{self.player_id}"
 
         channel = bot.get_channel(CANAL_ACCEPT_ID)
         if channel:
             embed = make_embed(
-                "Contract Accepted",
-                f"{player_text} has joined **{club['name']}**.",
+                "Contract Signed",
+                f"{player_text} has officially joined **{club['name']}**.",
                 discord.Color.green(),
-                f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+                f"Current Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
             )
             await channel.send(embed=embed)
 
@@ -466,18 +475,18 @@ class ContractView(discord.ui.View):
 
         await interaction.response.edit_message(
             embed=make_embed(
-                "Welcome to the Team",
-                f"You accepted the contract from **{club['name']}**.",
+                "Contract Accepted",
+                f"You have successfully joined **{club['name']}**.",
                 discord.Color.green(),
-                f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+                f"Current Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
             ),
             view=self
         )
 
-    @discord.ui.button(label="Decline", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="Decline Contract", style=discord.ButtonStyle.red)
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.player_id:
-            await interaction.response.send_message("This contract is not for you.", ephemeral=True)
+            await interaction.response.send_message("You are not the intended recipient of this contract offer.", ephemeral=True)
             return
 
         for item in self.children:
@@ -486,7 +495,7 @@ class ContractView(discord.ui.View):
         await interaction.response.edit_message(
             embed=make_embed(
                 "Contract Declined",
-                "You declined this contract offer.",
+                "You have declined this contract offer.",
                 discord.Color.red()
             ),
             view=self
@@ -497,39 +506,39 @@ class ContractView(discord.ui.View):
 # Commands
 # -----------------------------
 
-@bot.tree.command(name="painel", description="Open the admin team management panel")
-async def painel(interaction: discord.Interaction):
+@bot.tree.command(name="panel", description="Open the administrator team management panel")
+async def panel(interaction: discord.Interaction):
     if not is_admin(interaction):
         await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
         return
 
     embed = make_embed(
-        "Team Management Panel",
-        "Use the buttons below to create teams, remove teams, add managers, or remove managers.",
+        "Team Management System",
+        "Use the interactive buttons below to manage teams and manager permissions.",
         discord.Color.dark_teal(),
-        "Administrator only"
+        "Administrator Access Only"
     )
-    embed.add_field(name="Add New Team", value="Create a new team in the database.", inline=False)
-    embed.add_field(name="Remove Team", value="Delete an existing team permanently.", inline=False)
-    embed.add_field(name="Add New Manager", value="Give a user permission to manage a team.", inline=False)
-    embed.add_field(name="Remove Manager", value="Remove a user's permission to manage a team.", inline=False)
+    embed.add_field(name="Add New Team", value="Creates a new team entry in the database.", inline=False)
+    embed.add_field(name="Remove Team", value="Permanently deletes an existing team from the database.", inline=False)
+    embed.add_field(name="Add New Manager", value="Grants a user permission to manage a specific team.", inline=False)
+    embed.add_field(name="Remove Manager", value="Revokes a user's permission to manage a specific team.", inline=False)
 
     await interaction.response.send_message(embed=embed, view=AdminPanelView(), ephemeral=True)
 
 
-@bot.tree.command(name="contract", description="Send a contract offer to a player")
-@app_commands.describe(user="Player who will receive the contract")
+@bot.tree.command(name="contract", description="Send a formal contract offer to a player")
+@app_commands.describe(user="The player who will receive the contract offer")
 async def contract(interaction: discord.Interaction, user: discord.Member):
     club_key, club = find_manager_club(interaction.user.id)
 
     if not club_key or not club:
-        await interaction.response.send_message("You are not registered as a manager of any team.", ephemeral=True)
+        await interaction.response.send_message("You are not registered as a manager for any team.", ephemeral=True)
         return
 
     players = club.get("players", [])
     if len(players) >= MAX_PLAYERS_PER_CLUB:
         await interaction.response.send_message(
-            f"**{club['name']}** is full: {len(players)}/{MAX_PLAYERS_PER_CLUB} players.",
+            f"**{club['name']}** has reached the maximum roster size of {MAX_PLAYERS_PER_CLUB} players.",
             ephemeral=True
         )
         return
@@ -537,41 +546,41 @@ async def contract(interaction: discord.Interaction, user: discord.Member):
     current_club_key, current_club = find_player_club(user.id)
     if current_club_key:
         await interaction.response.send_message(
-            f"{user.mention} is already signed to **{current_club.get('name', current_club_key)}**.",
+            f"{user.mention} is already signed to **{current_club.get('name', current_club_key)}**. A player cannot be signed to multiple teams.",
             ephemeral=True
         )
         return
 
     embed = make_embed(
-        "Contract Offer",
-        f"You received a contract offer from **{club['name']}**.",
+        "Official Contract Offer",
+        f"You have received a contract offer from **{club['name']}** to join their roster.",
         discord.Color.blurple(),
-        f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+        f"Current Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
     )
-    embed.add_field(name="Manager", value=interaction.user.mention, inline=True)
-    embed.add_field(name="Team", value=club["name"], inline=True)
-    embed.add_field(name="Action Required", value="Accept or decline the offer using the buttons below.", inline=False)
+    embed.add_field(name="Issuing Manager", value=interaction.user.mention, inline=True)
+    embed.add_field(name="Organization", value=club["name"], inline=True)
+    embed.add_field(name="Next Steps", value="Please review the offer below and accept or decline using the buttons provided.", inline=False)
 
     try:
         await user.send(embed=embed, view=ContractView(user.id, interaction.user.id, club_key))
         await interaction.response.send_message(
-            f"Contract sent to {user.mention} for **{club['name']}**.",
+            f"Contract offer has been successfully delivered to {user.mention} for **{club['name']}**.",
             ephemeral=True
         )
     except discord.Forbidden:
         await interaction.response.send_message(
-            "I could not send a DM to this user. They may have DMs closed.",
+            "Unable to deliver the contract offer. The user may have disabled direct messages from server members.",
             ephemeral=True
         )
 
 
-@bot.tree.command(name="releplayer", description="Release a player from your team")
-@app_commands.describe(user="Player who will be removed from your team")
-async def releplayer(interaction: discord.Interaction, user: discord.Member):
+@bot.tree.command(name="releaseplayer", description="Remove a player from your team roster")
+@app_commands.describe(user="The player who will be removed from your team")
+async def releaseplayer(interaction: discord.Interaction, user: discord.Member):
     club_key, club = find_manager_club(interaction.user.id)
 
     if not club_key or not club:
-        await interaction.response.send_message("You are not registered as a manager of any team.", ephemeral=True)
+        await interaction.response.send_message("You are not registered as a manager for any team.", ephemeral=True)
         return
 
     data = load_clubs()
@@ -579,17 +588,17 @@ async def releplayer(interaction: discord.Interaction, user: discord.Member):
     players = club.setdefault("players", [])
 
     if user.id not in players:
-        await interaction.response.send_message(f"{user.mention} is not in **{club['name']}**.", ephemeral=True)
+        await interaction.response.send_message(f"{user.mention} is not currently on the roster of **{club['name']}**.", ephemeral=True)
         return
 
     players.remove(user.id)
     save_clubs(data)
 
     embed = make_embed(
-        "Player Released",
-        f"{user.mention} has been released from **{club['name']}**.",
+        "Player Released from Team",
+        f"{user.mention} has been officially released from **{club['name']}**.",
         discord.Color.orange(),
-        f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+        f"Updated Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
     )
 
     channel = bot.get_channel(CANAL_RELEASE_ID)
@@ -599,12 +608,12 @@ async def releplayer(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="release", description="Leave your current team")
-async def release(interaction: discord.Interaction):
+@bot.tree.command(name="leave", description="Voluntarily leave your current team")
+async def leave(interaction: discord.Interaction):
     club_key, club = find_player_club(interaction.user.id)
 
     if not club_key or not club:
-        await interaction.response.send_message("You are not signed to any team.", ephemeral=True)
+        await interaction.response.send_message("You are not currently signed to any team.", ephemeral=True)
         return
 
     data = load_clubs()
@@ -616,10 +625,10 @@ async def release(interaction: discord.Interaction):
         save_clubs(data)
 
     embed = make_embed(
-        "Player Released",
-        f"{interaction.user.mention} has left **{club['name']}**.",
+        "Player Left Team",
+        f"{interaction.user.mention} has voluntarily left **{club['name']}**.",
         discord.Color.orange(),
-        f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+        f"Updated Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
     )
 
     channel = bot.get_channel(CANAL_RELEASE_ID)
@@ -628,87 +637,85 @@ async def release(interaction: discord.Interaction):
 
     await interaction.response.send_message(
         embed=make_embed(
-            "You Left the Team",
-            f"You are no longer part of **{club['name']}**.",
+            "You Have Left Your Team",
+            f"You are no longer a member of **{club['name']}**.",
             discord.Color.orange(),
-            f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+            f"Updated Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
         ),
         ephemeral=True
     )
 
 
-@bot.tree.command(name="squad", description="Show the squad sheet of a team")
-@app_commands.describe(club="Team name")
-async def squad(interaction: discord.Interaction, club: str):
+@bot.tree.command(name="roster", description="Display the complete roster information for a team")
+@app_commands.describe(club="The name of the team to view")
+async def roster(interaction: discord.Interaction, club: str):
     selected_club = get_club(club)
 
     if not selected_club:
-        await interaction.response.send_message("Team not found.", ephemeral=True)
+        await interaction.response.send_message("No team found with that name. Please verify the team name and try again.", ephemeral=True)
         return
 
     players = selected_club.get("players", [])
     player_count = len(players)
 
     if not players:
-        roster = "No players signed yet."
+        roster_text = "No players have signed with this team yet."
     else:
         lines = []
         for player_id in players:
             member = interaction.guild.get_member(player_id) if interaction.guild else None
-            if member:
-                lines.append(member.name)
-            else:
-                lines.append(f"User {player_id}")
-        roster = "\n".join(lines)
+            lines.append(member.name if member else f"User-{player_id}")
+        roster_text = "\n".join(lines)
 
     embed = discord.Embed(
-        title=f"Squadsheet of {selected_club['name']}",
-        description=f"**Players:** `{player_count}/{MAX_PLAYERS_PER_CLUB} (max)`\n\n{roster}",
+        title=f"Team Roster: {selected_club['name']}",
+        description=f"Active Players: `{player_count}/{MAX_PLAYERS_PER_CLUB}`\n\n{roster_text}",
         color=discord.Color.dark_teal()
     )
-    embed.set_footer(text="UFA Team Management")
+    embed.set_footer(text="UFA League Management System")
 
     managers = selected_club.get("managers", [])
     if managers:
         manager_names = []
         for manager_id in managers:
             member = interaction.guild.get_member(manager_id) if interaction.guild else None
-            manager_names.append(member.name if member else f"User {manager_id}")
-        embed.add_field(name="Managers", value="\n".join(manager_names), inline=False)
+            manager_names.append(member.name if member else f"User-{manager_id}")
+        embed.add_field(name="Management Staff", value="\n".join(manager_names), inline=False)
 
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="freeagency", description="Send a free agency post")
+@bot.tree.command(name="freeagency", description="Broadcast a free agency announcement to recruiters")
 @app_commands.describe(
-    message="Your free agency message",
-    position="Your position"
+    message="Your free agency statement or recruitment request",
+    position="Your preferred playing position (e.g., Striker, Midfielder, Defender, Goalkeeper)"
 )
 async def freeagency(interaction: discord.Interaction, message: str, position: str):
     channel = bot.get_channel(CANAL_FREEAGENCY_ID)
 
     if channel is None:
-        await interaction.response.send_message("I could not find the Free Agency channel.", ephemeral=True)
+        await interaction.response.send_message("Unable to locate the Free Agency channel. Please notify an administrator.", ephemeral=True)
         return
 
     embed = make_embed(
-        "New Free Agency",
-        "A player is looking for a team.",
+        "Free Agency Announcement",
+        "A player is currently seeking a team to join.",
         discord.Color.blue(),
-        "UFA Team Management"
+        "UFA League Management System"
     )
     embed.add_field(name="Player", value=interaction.user.mention, inline=True)
     embed.add_field(name="Position", value=position, inline=True)
-    embed.add_field(name="Message", value=message, inline=False)
+    embed.add_field(name="Statement", value=message, inline=False)
 
     await channel.send(content=interaction.user.mention, embed=embed)
-    await interaction.response.send_message("Free agency post sent successfully.", ephemeral=True)
+    await interaction.response.send_message("Your free agency announcement has been posted successfully.", ephemeral=True)
 
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"Online as {bot.user}")
+    print(f"Bot is online and authenticated as {bot.user}")
+    print(f"Connected to {len(bot.guilds)} guild(s)")
 
 
 bot.run(TOKEN)
