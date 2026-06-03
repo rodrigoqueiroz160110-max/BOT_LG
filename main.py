@@ -366,14 +366,14 @@ class AdminPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
 
-    @discord.ui.button(label="➕ Add New Team", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="Add New Team", style=discord.ButtonStyle.green)
     async def add_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction):
             await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
             return
         await interaction.response.send_modal(AddTeamModal())
 
-    @discord.ui.button(label="🗑️ Remove Team", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Remove Team", style=discord.ButtonStyle.danger)
     async def remove_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction):
             await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
@@ -387,7 +387,7 @@ class AdminPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=RemoveTeamView(), ephemeral=True)
 
-    @discord.ui.button(label="👔 Add New Manager", style=discord.ButtonStyle.blurple)
+    @discord.ui.button(label="Add New Manager", style=discord.ButtonStyle.blurple)
     async def add_manager(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction):
             await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
@@ -401,7 +401,7 @@ class AdminPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=ManagerUserSelectView("add"), ephemeral=True)
 
-    @discord.ui.button(label="🔻 Remove Manager", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="Remove Manager", style=discord.ButtonStyle.red)
     async def remove_manager(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_admin(interaction):
             await interaction.response.send_message("Only administrators can use this command.", ephemeral=True)
@@ -417,7 +417,7 @@ class AdminPanelView(discord.ui.View):
 
 
 # -----------------------------
-# Contract views
+# Contract views (CORRIGIDO - sem erro de channel.send)
 # -----------------------------
 
 class ContractView(discord.ui.View):
@@ -465,19 +465,19 @@ class ContractView(discord.ui.View):
             players.append(self.player_id)
             save_clubs(data)
 
-        guild = bot.guilds[0] if bot.guilds else None
-        member = guild.get_member(self.player_id) if guild else None
-        player_text = member.mention if member else f"User-{self.player_id}"
-
+        # CORRIGIDO: Verifica se o canal existe antes de tentar enviar
         channel = bot.get_channel(CANAL_ACCEPT_ID)
         if channel:
-            embed = make_embed(
-                "Contract Signed",
-                f"{player_text} has officially joined **{club['name']}**.",
-                discord.Color.green(),
-                f"Current Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
-            )
-            await channel.send(embed=embed)
+            try:
+                embed = make_embed(
+                    "Contract Signed",
+                    f"<@{self.player_id}> has officially joined **{club['name']}**.",
+                    discord.Color.green(),
+                    f"Current Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+                )
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"Error sending to accept channel: {e}")
 
         for item in self.children:
             item.disabled = True
@@ -618,7 +618,10 @@ async def releaseplayer(interaction: discord.Interaction, user: discord.Member):
 
     channel = bot.get_channel(CANAL_RELEASE_ID)
     if channel:
-        await channel.send(embed=embed)
+        try:
+            await channel.send(embed=embed)
+        except Exception as e:
+            print(f"Error sending to release channel: {e}")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -648,7 +651,10 @@ async def leave(interaction: discord.Interaction):
 
     channel = bot.get_channel(CANAL_RELEASE_ID)
     if channel:
-        await channel.send(embed=embed)
+        try:
+            await channel.send(embed=embed)
+        except Exception as e:
+            print(f"Error sending to release channel: {e}")
 
     await interaction.response.send_message(
         embed=make_embed(
@@ -678,11 +684,7 @@ async def roster(interaction: discord.Interaction, club: str):
     else:
         lines = []
         for index, player_id in enumerate(players, start=1):
-            member = interaction.guild.get_member(player_id) if interaction.guild else None
-            if member:
-                lines.append(f"Player ({member.mention}) - {index}")
-            else:
-                lines.append(f"Player (User-{player_id}) - {index}")
+            lines.append(f"Player (<@{player_id}>) - {index}")
         roster_text = "\n".join(lines)
 
     embed = discord.Embed(
@@ -697,8 +699,7 @@ async def roster(interaction: discord.Interaction, club: str):
     if managers:
         manager_names = []
         for manager_id in managers:
-            member = interaction.guild.get_member(manager_id) if interaction.guild else None
-            manager_names.append(member.mention if member else f"User-{manager_id}")
+            manager_names.append(f"<@{manager_id}>")
         embed.add_field(name="Management Staff", value="\n".join(manager_names), inline=False)
 
     await interaction.response.send_message(embed=embed)
