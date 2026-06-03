@@ -87,11 +87,7 @@ def make_embed(title: str, description: str, color: discord.Color, footer: Optio
     )
     if footer:
         embed.set_footer(text=footer)
-    else:
-        embed.set_footer(text="UFA League System")
-    
     embed.timestamp = datetime.utcnow()
-    
     return embed
 
 
@@ -100,14 +96,6 @@ def is_admin(interaction: discord.Interaction) -> bool:
         isinstance(interaction.user, discord.Member)
         and interaction.user.guild_permissions.administrator
     )
-
-
-def get_member_name(guild: Optional[discord.Guild], user_id: int) -> str:
-    if guild:
-        member = guild.get_member(user_id)
-        if member:
-            return member.name
-    return f"User-{user_id}"
 
 
 # -----------------------------
@@ -417,15 +405,16 @@ class AdminPanelView(discord.ui.View):
 
 
 # -----------------------------
-# Contract views (CORRIGIDO - sem erro de channel.send)
+# Contract views
 # -----------------------------
 
 class ContractView(discord.ui.View):
-    def __init__(self, player_id: int, manager_id: int, club_key: str):
+    def __init__(self, player_id: int, manager_id: int, club_key: str, club_name: str):
         super().__init__(timeout=300)
         self.player_id = player_id
         self.manager_id = manager_id
         self.club_key = club_key
+        self.club_name = club_name
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.player_id:
@@ -465,19 +454,16 @@ class ContractView(discord.ui.View):
             players.append(self.player_id)
             save_clubs(data)
 
-        # CORRIGIDO: Verifica se o canal existe antes de tentar enviar
+        # Envia embed para o canal de accept
         channel = bot.get_channel(CANAL_ACCEPT_ID)
         if channel:
-            try:
-                embed = make_embed(
-                    "Contract Signed",
-                    f"<@{self.player_id}> has officially joined **{club['name']}**.",
-                    discord.Color.green(),
-                    f"Current Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
-                )
-                await channel.send(embed=embed)
-            except Exception as e:
-                print(f"Error sending to accept channel: {e}")
+            embed = make_embed(
+                "Contract Accepted",
+                f"<@{self.player_id}> has accepted contract for **{club['name']}**.\nUse `/roster {club['name']}` to see all players.",
+                discord.Color.green(),
+                f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+            )
+            await channel.send(embed=embed)
 
         for item in self.children:
             item.disabled = True
@@ -487,7 +473,7 @@ class ContractView(discord.ui.View):
                 "Contract Accepted",
                 f"You have successfully joined **{club['name']}**.",
                 discord.Color.green(),
-                f"Current Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+                f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
             ),
             view=self,
             ephemeral=True
@@ -571,7 +557,7 @@ async def contract(interaction: discord.Interaction, user: discord.Member):
     embed.add_field(name="Next Steps", value="Please review the offer below and accept or decline using the buttons provided.", inline=False)
 
     try:
-        view = ContractView(user.id, interaction.user.id, club_key)
+        view = ContractView(user.id, interaction.user.id, club_key, club["name"])
         await user.send(embed=embed, view=view)
         await interaction.response.send_message(
             f"Contract offer has been successfully delivered to {user.mention} for **{club['name']}**.",
@@ -610,18 +596,15 @@ async def releaseplayer(interaction: discord.Interaction, user: discord.Member):
     save_clubs(data)
 
     embed = make_embed(
-        "Player Released from Team",
-        f"{user.mention} has been officially released from **{club['name']}**.",
+        "Player Released",
+        f"{user.mention} has been released from **{club['name']}**.\nUse `/roster {club['name']}` to see updated roster.",
         discord.Color.orange(),
-        f"Updated Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+        f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
     )
 
     channel = bot.get_channel(CANAL_RELEASE_ID)
     if channel:
-        try:
-            await channel.send(embed=embed)
-        except Exception as e:
-            print(f"Error sending to release channel: {e}")
+        await channel.send(embed=embed)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -643,25 +626,22 @@ async def leave(interaction: discord.Interaction):
         save_clubs(data)
 
     embed = make_embed(
-        "Player Left Team",
-        f"{interaction.user.mention} has voluntarily left **{club['name']}**.",
+        "Player Left",
+        f"{interaction.user.mention} has left **{club['name']}**.\nUse `/roster {club['name']}` to see updated roster.",
         discord.Color.orange(),
-        f"Updated Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+        f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
     )
 
     channel = bot.get_channel(CANAL_RELEASE_ID)
     if channel:
-        try:
-            await channel.send(embed=embed)
-        except Exception as e:
-            print(f"Error sending to release channel: {e}")
+        await channel.send(embed=embed)
 
     await interaction.response.send_message(
         embed=make_embed(
-            "You Have Left Your Team",
+            "You Left Your Team",
             f"You are no longer a member of **{club['name']}**.",
             discord.Color.orange(),
-            f"Updated Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+            f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
         ),
         ephemeral=True
     )
