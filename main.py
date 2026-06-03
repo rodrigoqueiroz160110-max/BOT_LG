@@ -1,7 +1,7 @@
 import os
 import json
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
@@ -87,7 +87,7 @@ def make_embed(title: str, description: str, color: discord.Color, footer: Optio
     )
     if footer:
         embed.set_footer(text=footer)
-    embed.timestamp = datetime.utcnow()
+    embed.timestamp = datetime.now(timezone.utc)
     return embed
 
 
@@ -454,16 +454,20 @@ class ContractView(discord.ui.View):
             players.append(self.player_id)
             save_clubs(data)
 
-        # Envia embed para o canal de accept
         channel = bot.get_channel(CANAL_ACCEPT_ID)
         if channel:
-            embed = make_embed(
-                "Contract Accepted",
-                f"<@{self.player_id}> has accepted contract for **{club['name']}**.\nUse `/roster {club['name']}` to see all players.",
-                discord.Color.green(),
-                f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
-            )
-            await channel.send(embed=embed)
+            try:
+                embed = make_embed(
+                    "Contract Accepted",
+                    f"<@{self.player_id}> has accepted contract for **{club['name']}**.\nUse `/roster {club['name']}` to see all players.",
+                    discord.Color.green(),
+                    f"Roster: {len(players)}/{MAX_PLAYERS_PER_CLUB}"
+                )
+                await channel.send(embed=embed)
+            except discord.Forbidden:
+                print(f"Missing permissions to send to accept channel {CANAL_ACCEPT_ID}")
+            except Exception as e:
+                print(f"Error sending to accept channel: {e}")
 
         for item in self.children:
             item.disabled = True
@@ -604,7 +608,12 @@ async def releaseplayer(interaction: discord.Interaction, user: discord.Member):
 
     channel = bot.get_channel(CANAL_RELEASE_ID)
     if channel:
-        await channel.send(embed=embed)
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            print(f"Missing permissions to send to release channel {CANAL_RELEASE_ID}")
+        except Exception as e:
+            print(f"Error sending to release channel: {e}")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -634,7 +643,12 @@ async def leave(interaction: discord.Interaction):
 
     channel = bot.get_channel(CANAL_RELEASE_ID)
     if channel:
-        await channel.send(embed=embed)
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            print(f"Missing permissions to send to release channel {CANAL_RELEASE_ID}")
+        except Exception as e:
+            print(f"Error sending to release channel: {e}")
 
     await interaction.response.send_message(
         embed=make_embed(
@@ -673,7 +687,7 @@ async def roster(interaction: discord.Interaction, club: str):
         color=discord.Color.dark_teal()
     )
     embed.set_footer(text=f"Total Players: {player_count}/{MAX_PLAYERS_PER_CLUB}")
-    embed.timestamp = datetime.utcnow()
+    embed.timestamp = datetime.now(timezone.utc)
 
     managers = selected_club.get("managers", [])
     if managers:
@@ -707,8 +721,19 @@ async def freeagency(interaction: discord.Interaction, message: str, position: s
     embed.add_field(name="Position", value=position, inline=True)
     embed.add_field(name="Statement", value=message, inline=False)
 
-    await channel.send(content=interaction.user.mention, embed=embed)
-    await interaction.response.send_message("Your free agency announcement has been posted successfully.", ephemeral=True)
+    try:
+        await channel.send(content=interaction.user.mention, embed=embed)
+        await interaction.response.send_message("Your free agency announcement has been posted successfully.", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "Unable to post to the Free Agency channel. Please check bot permissions.",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"An error occurred: {str(e)}",
+            ephemeral=True
+        )
 
 
 @bot.event
