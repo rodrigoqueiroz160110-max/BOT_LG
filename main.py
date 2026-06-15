@@ -8,7 +8,7 @@ from datetime import datetime
 
 # Desabilitar intents privilegiados
 intents = discord.Intents.default()
-intents.message_content = False
+intents.message_content = True  # Precisa para ler mensagens
 intents.members = False
 
 bot = commands.Bot(command_prefix='/', intents=intents)
@@ -31,7 +31,11 @@ LOG_CHANNEL_ID = 1515097436329345157
 AGENCY_CHANNEL_ID = 1515097317370494996
 SCOUTING_CHANNEL_ID = 1515901730645082132
 
+# Dicionário para armazenar criação de times ativas
+active_creations = {}
+
 def is_valid_emoji(emoji_str):
+    # Aceita emojis normais e personalizados
     emoji_pattern = re.compile(r'<:\w+:\d+>|[\U0001F300-\U0001F9FF]')
     return bool(emoji_pattern.match(emoji_str)) or len(emoji_str) <= 2
 
@@ -67,23 +71,179 @@ async def panel(interaction: discord.Interaction):
     )
     
     view = AdminPanelView()
-    # Ephemeral = True faz a mensagem ser visível apenas para quem usou o comando
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 class AdminPanelView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=300)  # Timeout de 5 minutos
+        super().__init__(timeout=300)
     
     @discord.ui.button(label="Add New Team", style=discord.ButtonStyle.green)
     async def add_team(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Criar um modal com perguntas uma por vez
-        await interaction.response.send_modal(CreateTeamModal())
+        # Iniciar processo de criação de time
+        active_creations[interaction.user.id] = {'step': 'emoji'}
+        
+        embed = discord.Embed(
+            title="Create New Team - Step 1/4",
+            description="Please send the **team emoji** in this chat.\n\nExamples: `⚽` or `:FRA:` or `<:FLA:123456789>`",
+            color=discord.Color.blue()
+        )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        
+        # Esperar resposta do usuário
+        def check(m):
+            return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
+        
+        try:
+            msg = await bot.wait_for('message', timeout=120.0, check=check)
+            
+            if not is_valid_emoji(msg.content):
+                await interaction.followup.send("Invalid emoji! Please try again with `/panel`.", ephemeral=True)
+                del active_creations[interaction.user.id]
+                return
+            
+            await msg.delete()
+            active_creations[interaction.user.id]['emoji'] = msg.content
+            active_creations[interaction.user.id]['step'] = 'name'
+            
+            embed2 = discord.Embed(
+                title="Create New Team - Step 2/4",
+                description="Please send the **team name** in this chat.\n\nExample: `Flamengo`",
+                color=discord.Color.blue()
+            )
+            
+            await interaction.followup.send(embed=embed2, ephemeral=True)
+            
+            msg2 = await bot.wait_for('message', timeout=120.0, check=check)
+            await msg2.delete()
+            active_creations[interaction.user.id]['name'] = msg2.content
+            active_creations[interaction.user.id]['step'] = 'manager'
+            
+            embed3 = discord.Embed(
+                title="Create New Team - Step 3/4",
+                description="Please **mention the manager** in this chat.\n\nExample: `@username`",
+                color=discord.Color.blue()
+            )
+            
+            await interaction.followup.send(embed=embed3, ephemeral=True)
+            
+            msg3 = await bot.wait_for('message', timeout=120.0, check=check)
+            
+            # Extrair menção
+            if not msg3.mentions:
+                await interaction.followup.send("Please mention a valid user!", ephemeral=True)
+                del active_creations[interaction.user.id]
+                return
+            
+            manager_id = msg3.mentions[0].id
+            await msg3.delete()
+            active_creations[interaction.user.id]['manager_id'] = manager_id
+            active_creations[interaction.user.id]['step'] = 'co_manager'
+            
+            # Perguntar sobre co-manager
+            embed4 = discord.Embed(
+                title="Create New Team - Step 4/5",
+                description="Do you want to add a **Co-Manager**?\n\nReply with `yes` or `no`",
+                color=discord.Color.blue()
+            )
+            
+            await interaction.followup.send(embed=embed4, ephemeral=True)
+            
+            msg4 = await bot.wait_for('message', timeout=60.0, check=check)
+            await msg4.delete()
+            
+            if msg4.content.lower() in ['yes', 'y', 'sim']:
+                embed5 = discord.Embed(
+                    title="Create New Team - Step 4/5",
+                    description="Please **mention the co-manager** in this chat.\n\nExample: `@username`\nOr send `skip` to skip",
+                    color=discord.Color.blue()
+                )
+                
+                await interaction.followup.send(embed=embed5, ephemeral=True)
+                
+                msg5 = await bot.wait_for('message', timeout=120.0, check=check)
+                
+                if msg5.content.lower() == 'skip':
+                    active_creations[interaction.user.id]['co_manager_id'] = None
+                    await msg5.delete()
+                elif msg5.mentions:
+                    active_creations[interaction.user.id]['co_manager_id'] = msg5.mentions[0].id
+                    await msg5.delete()
+                else:
+                    active_creations[interaction.user.id]['co_manager_id'] = None
+                    await interaction.followup.send("Invalid input, skipping co-manager...", ephemeral=True)
+                    await msg5.delete()
+            else:
+                active_creations[interaction.user.id]['co_manager_id'] = None
+            
+            active_creations[interaction.user.id]['step'] = 'limit'
+            
+            # Perguntar limite
+            embed6 = discord.Embed(
+                title="Create New Team - Step 5/5",
+                description="Please send the **team limit** (1-14)\n\nExample: `10`",
+                color=discord.Color.blue()
+            )
+            
+            await interaction.followup.send(embed=embed6, ephemeral=True)
+            
+            msg6 = await bot.wait_for('message', timeout=60.0, check=check)
+            
+            try:
+                limit = int(msg6.content)
+                if limit < 1 or limit > 14:
+                    await interaction.followup.send("Limit must be between 1 and 14!", ephemeral=True)
+                    del active_creations[interaction.user.id]
+                    return
+                
+                await msg6.delete()
+                
+                # Criar o time
+                team_id = len(data['teams']) + 1
+                
+                data['teams'][str(team_id)] = {
+                    'id': team_id,
+                    'emoji': active_creations[interaction.user.id]['emoji'],
+                    'name': active_creations[interaction.user.id]['name'],
+                    'manager_id': active_creations[interaction.user.id]['manager_id'],
+                    'co_manager_id': active_creations[interaction.user.id]['co_manager_id'],
+                    'limit': limit,
+                    'players': [],
+                    'created_at': datetime.now().isoformat()
+                }
+                
+                save_data(data)
+                
+                # Embed de confirmação
+                embed_final = discord.Embed(
+                    title="Team Created Successfully",
+                    description=f"**Team:** {active_creations[interaction.user.id]['emoji']} {active_creations[interaction.user.id]['name']}\n"
+                               f"**Manager:** <@{active_creations[interaction.user.id]['manager_id']}>\n"
+                               f"**Co-Manager:** {f'<@{active_creations[interaction.user.id]["co_manager_id"]}>' if active_creations[interaction.user.id]['co_manager_id'] else 'None'}\n"
+                               f"**Limit:** {limit}/14",
+                    color=discord.Color.green()
+                )
+                
+                await interaction.followup.send(embed=embed_final, ephemeral=True)
+                
+                # Limpar dados
+                del active_creations[interaction.user.id]
+                
+            except ValueError:
+                await interaction.followup.send("Invalid number! Please use `/panel` to try again.", ephemeral=True)
+                del active_creations[interaction.user.id]
+                
+        except TimeoutError:
+            await interaction.followup.send("Time expired! Please use `/panel` to try again.", ephemeral=True)
+            if interaction.user.id in active_creations:
+                del active_creations[interaction.user.id]
     
     @discord.ui.button(label="Delete Team", style=discord.ButtonStyle.red)
     async def delete_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not data['teams']:
             await interaction.response.send_message("No teams available!", ephemeral=True)
             return
+        
         view = DeleteTeamView()
         await interaction.response.send_message("Select team to delete:", view=view, ephemeral=True)
     
@@ -92,6 +252,7 @@ class AdminPanelView(discord.ui.View):
         if not data['teams']:
             await interaction.response.send_message("No teams available!", ephemeral=True)
             return
+        
         view = AddPlayerView()
         await interaction.response.send_message("Select team to add player:", view=view, ephemeral=True)
     
@@ -100,182 +261,9 @@ class AdminPanelView(discord.ui.View):
         if not data['teams']:
             await interaction.response.send_message("No teams available!", ephemeral=True)
             return
+        
         view = RemoveManagerView()
         await interaction.response.send_message("Select team to remove manager:", view=view, ephemeral=True)
-
-class CreateTeamModal(discord.ui.Modal, title="Create New Team - Step 1/4"):
-    emoji = discord.ui.TextInput(
-        label="Team Emoji", 
-        placeholder="Example: ⚽ or :FRA: or <:FLA:123456789>", 
-        required=True,
-        max_length=50
-    )
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        if not is_valid_emoji(self.emoji.value):
-            await interaction.response.send_message("Invalid emoji! Use normal emojis or custom like :FRA: or <:name:id>", ephemeral=True)
-            return
-        
-        # Salvar emoji temporariamente e ir para próximo passo
-        create_team_data[interaction.user.id] = {'emoji': self.emoji.value}
-        
-        modal = CreateTeamNameModal()
-        await interaction.response.send_modal(modal)
-
-class CreateTeamNameModal(discord.ui.Modal, title="Create New Team - Step 2/4"):
-    name = discord.ui.TextInput(
-        label="Team Name",
-        placeholder="Enter team name",
-        required=True,
-        max_length=100
-    )
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        create_team_data[interaction.user.id]['name'] = self.name.value
-        
-        # Criar view para selecionar manager
-        embed = discord.Embed(
-            title="Step 3/4 - Select Manager",
-            description="Please select the team manager from the dropdown menu below.",
-            color=discord.Color.blue()
-        )
-        
-        view = SelectManagerView(interaction.user.id)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-class SelectManagerView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=120)
-        self.user_id = user_id
-        
-        # Adicionar select de membros
-        select = UserSelectMenu("manager", user_id)
-        self.add_item(select)
-
-class SelectCoManagerView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=120)
-        self.user_id = user_id
-        
-        # Adicionar select de membros
-        select = UserSelectMenu("co_manager", user_id)
-        self.add_item(select)
-        
-        # Botão para pular
-        skip_button = discord.ui.Button(label="Skip (No Co-Manager)", style=discord.ButtonStyle.secondary)
-        skip_button.callback = self.skip_co_manager
-        self.add_item(skip_button)
-    
-    async def skip_co_manager(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("This menu is not for you!", ephemeral=True)
-            return
-        
-        create_team_data[self.user_id]['co_manager_id'] = None
-        await self.finish_team_creation(interaction)
-    
-    async def finish_team_creation(self, interaction: discord.Interaction):
-        data_team = create_team_data[self.user_id]
-        
-        limit_view = SelectLimitView(self.user_id)
-        embed = discord.Embed(
-            title="Step 4/4 - Select Team Limit",
-            description="Choose the maximum number of players for this team (1-14)",
-            color=discord.Color.blue()
-        )
-        await interaction.response.edit_message(embed=embed, view=limit_view)
-
-class SelectLimitView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=120)
-        self.user_id = user_id
-        
-        # Criar botões de 1 a 14
-        for i in range(1, 15):
-            button = discord.ui.Button(label=str(i), style=discord.ButtonStyle.secondary, custom_id=f"limit_{i}")
-            button.callback = self.create_limit_callback(i)
-            self.add_item(button)
-    
-    def create_limit_callback(self, limit):
-        async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user_id:
-                await interaction.response.send_message("This menu is not for you!", ephemeral=True)
-                return
-            
-            data_team = create_team_data[self.user_id]
-            data_team['limit'] = limit
-            
-            # Criar o time
-            team_id = len(data['teams']) + 1
-            
-            data['teams'][str(team_id)] = {
-                'id': team_id,
-                'emoji': data_team['emoji'],
-                'name': data_team['name'],
-                'manager_id': data_team['manager_id'],
-                'co_manager_id': data_team.get('co_manager_id'),
-                'limit': limit,
-                'players': [],
-                'created_at': datetime.now().isoformat()
-            }
-            
-            save_data(data)
-            
-            # Limpar dados temporários
-            del create_team_data[self.user_id]
-            
-            embed = discord.Embed(
-                title="Team Created Successfully",
-                description=f"**Team:** {data_team['emoji']} {data_team['name']}\n"
-                           f"**Manager:** <@{data_team['manager_id']}>\n"
-                           f"**Co-Manager:** {f'<@{data_team["co_manager_id"]}>' if data_team.get('co_manager_id') else 'None'}\n"
-                           f"**Limit:** {limit}/14",
-                color=discord.Color.green()
-            )
-            await interaction.response.edit_message(embed=embed, view=None)
-        
-        return callback
-
-class UserSelectMenu(discord.ui.Select):
-    def __init__(self, role_type, user_id):
-        self.role_type = role_type
-        self.user_id = user_id
-        
-        # Opções vazias por enquanto
-        options = [discord.SelectOption(label="Loading members...", value="loading")]
-        super().__init__(placeholder="Select a user...", options=options)
-    
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("This menu is not for you!", ephemeral=True)
-            return
-        
-        selected_id = int(self.values[0])
-        
-        if self.role_type == "manager":
-            create_team_data[self.user_id]['manager_id'] = selected_id
-            
-            # Ir para próximo passo - selecionar co-manager
-            embed = discord.Embed(
-                title="Step 4/4 - Select Co-Manager (Optional)",
-                description="Please select the co-manager or click 'Skip'",
-                color=discord.Color.blue()
-            )
-            view = SelectCoManagerView(self.user_id)
-            await interaction.response.edit_message(embed=embed, view=view)
-        
-        elif self.role_type == "co_manager":
-            create_team_data[self.user_id]['co_manager_id'] = selected_id
-            view = SelectLimitView(self.user_id)
-            embed = discord.Embed(
-                title="Step 4/4 - Select Team Limit",
-                description="Choose the maximum number of players for this team (1-14)",
-                color=discord.Color.blue()
-            )
-            await interaction.response.edit_message(embed=embed, view=view)
-
-# Dicionário para armazenar dados temporários de criação de time
-create_team_data = {}
 
 class DeleteTeamView(discord.ui.View):
     def __init__(self):
@@ -312,9 +300,8 @@ class TeamSelectMenu(discord.ui.Select):
             await interaction.response.send_message(f"Team **{team['name']}** deleted!", ephemeral=True)
         
         elif self.action == "add":
-            # Modal para adicionar jogador com menção
-            modal = AddPlayerModal(team_id)
-            await interaction.response.send_modal(modal)
+            # Criar modal para adicionar jogador
+            await interaction.response.send_modal(AddPlayerModal(team_id))
         
         elif self.action == "remove":
             team = data['teams'][team_id]
@@ -348,8 +335,8 @@ class RemoveManagerButton(discord.ui.Button):
 
 class AddPlayerModal(discord.ui.Modal, title="Add Player to Team"):
     user_mention = discord.ui.TextInput(
-        label="Player Mention or ID", 
-        placeholder="Example: @player or 123456789", 
+        label="User ID or Mention",
+        placeholder="Example: @player or 123456789",
         required=True
     )
     
@@ -359,19 +346,18 @@ class AddPlayerModal(discord.ui.Modal, title="Add Player to Team"):
     
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            # Extrair ID da menção ou usar direto
+            # Extrair ID da menção
             user_input = self.user_mention.value.strip()
             user_id_match = re.search(r'(\d+)', user_input)
             
-            if user_id_match:
-                user_id = int(user_id_match.group(1))
-            else:
-                await interaction.response.send_message("Invalid user! Please mention a user or provide their ID.", ephemeral=True)
+            if not user_id_match:
+                await interaction.response.send_message("Invalid user! Please mention a user or provide ID.", ephemeral=True)
                 return
             
+            user_id = int(user_id_match.group(1))
             team = data['teams'][self.team_id]
             
-            # Verificar se o usuário já está em algum time
+            # Verificações
             for t in data['teams'].values():
                 if user_id in t['players']:
                     await interaction.response.send_message("This player is already in another team!", ephemeral=True)
@@ -394,7 +380,7 @@ class AddPlayerModal(discord.ui.Modal, title="Add Player to Team"):
             await send_log(interaction.guild, f"**Player Added**\nTeam: {team['emoji']} {team['name']}\nPlayer: <@{user_id}>\nAdded by: {interaction.user.mention}")
             
         except Exception as e:
-            await interaction.response.send_message(f"Error: Invalid input!", ephemeral=True)
+            await interaction.response.send_message(f"Error adding player!", ephemeral=True)
 
 @bot.tree.command(name="up", description="Upgrade player tier")
 @app_commands.default_permissions(administrator=True)
@@ -461,6 +447,7 @@ async def contract(interaction: discord.Interaction, user: discord.User):
         await interaction.response.send_message("You are not a manager of any team!", ephemeral=True)
         return
     
+    # Check if user already in a team
     for team in data['teams'].values():
         if user.id in team['players']:
             await interaction.response.send_message("This player is already in a team!", ephemeral=True)
@@ -500,7 +487,7 @@ class ContractView(discord.ui.View):
         team = data['teams'][str(self.team_id)]
         
         if len(team['players']) >= team['limit']:
-            await interaction.response.send_message(f"Team is full!", ephemeral=True)
+            await interaction.response.send_message("Team is full!", ephemeral=True)
             return
         
         if self.player_id in [p for t in data['teams'].values() for p in t['players']]:
@@ -523,7 +510,7 @@ class ContractView(discord.ui.View):
         
         manager = await interaction.client.fetch_user(self.manager_id)
         if manager:
-            await manager.send(f"{interaction.user.mention} accepted the contract!")
+            await manager.send(f"{interaction.user.mention} accepted the contract for **{team['name']}**!")
         
         self.stop()
     
@@ -538,7 +525,7 @@ class ContractView(discord.ui.View):
         
         manager = await interaction.client.fetch_user(self.manager_id)
         if manager:
-            await manager.send(f"{interaction.user.mention} declined the contract.")
+            await manager.send(f"{interaction.user.mention} declined the contract for **{team['name']}**.")
         
         self.stop()
 
@@ -559,10 +546,13 @@ async def roster(interaction: discord.Interaction):
     
     players_list = []
     for player_id in user_team['players']:
-        user = await bot.fetch_user(player_id)
-        players_list.append(f"@{user.name} | {user.display_name}")
+        try:
+            user = await bot.fetch_user(player_id)
+            players_list.append(f"@{user.name} | {user.display_name}")
+        except:
+            players_list.append(f"User ID: {player_id}")
     
-    players_text = "\n".join(players_list) if players_list else "No players"
+    players_text = "\n".join(players_list) if players_list else "No players yet"
     
     embed = discord.Embed(title=f"Roster of {user_team['name']}", color=discord.Color.blue())
     embed.add_field(name="Manager Team", value=f"Manager: {manager}\nCo-Manager: {co_manager}", inline=False)
@@ -597,7 +587,7 @@ async def kick(interaction: discord.Interaction, user: discord.User):
     await send_log(interaction.guild, f"**Player Kicked**\nTeam: {user_team['emoji']} {user_team['name']}\nPlayer: {user.mention}\nKicked by: {interaction.user.mention}")
     
     try:
-        await user.send(f"You were kicked from **{user_team['name']}**!")
+        await user.send(f"You were kicked from **{user_team['name']}** by {interaction.user.mention}!")
     except:
         pass
 
@@ -679,7 +669,7 @@ async def scouting(interaction: discord.Interaction, message: str):
     )
     embed.add_field(name="Team", value=f"{user_team['emoji']} {user_team['name']}", inline=True)
     embed.add_field(name="Manager", value=interaction.user.mention, inline=True)
-    embed.set_footer(text=f"Contact the manager above for trials")
+    embed.set_footer(text="Contact the manager above for trials")
     
     scouting_channel = interaction.guild.get_channel(SCOUTING_CHANNEL_ID)
     if scouting_channel:
