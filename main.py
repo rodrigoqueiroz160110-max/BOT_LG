@@ -76,9 +76,9 @@ async def panel(interaction: discord.Interaction):
 
 class AdminPanelView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)  # Sem timeout para o painel principal
+        super().__init__(timeout=None)
     
-    @discord.ui.button(label="Add New Team", style=discord.ButtonStyle.green, custom_id="add_team_btn")
+    @discord.ui.button(label="Add New Team", style=discord.ButtonStyle.green)
     async def add_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         active_creations[interaction.user.id] = {'step': 'emoji'}
         
@@ -271,229 +271,139 @@ class AdminPanelView(discord.ui.View):
             if interaction.user.id in active_creations:
                 del active_creations[interaction.user.id]
     
-    @discord.ui.button(label="Delete Team", style=discord.ButtonStyle.red, custom_id="delete_team_btn")
+    @discord.ui.button(label="Delete Team", style=discord.ButtonStyle.red)
     async def delete_team(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not data['teams']:
             await interaction.response.send_message("No teams available!", ephemeral=True)
             return
         
-        # Criar uma nova view para deletar time
-        embed = discord.Embed(
-            title="Delete Team",
-            description="Select a team to delete from the dropdown below:",
-            color=discord.Color.red()
-        )
-        
         view = DeleteTeamView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message("Select team to delete:", view=view, ephemeral=True)
     
-    @discord.ui.button(label="Add Player", style=discord.ButtonStyle.blurple, custom_id="add_player_btn")
+    @discord.ui.button(label="Add Player", style=discord.ButtonStyle.blurple)
     async def add_player(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not data['teams']:
             await interaction.response.send_message("No teams available!", ephemeral=True)
             return
         
-        embed = discord.Embed(
-            title="Add Player to Team",
-            description="Select a team to add a player:",
-            color=discord.Color.blue()
-        )
-        
         view = AddPlayerView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message("Select team to add player:", view=view, ephemeral=True)
     
-    @discord.ui.button(label="Remove Manager", style=discord.ButtonStyle.gray, custom_id="remove_manager_btn")
+    @discord.ui.button(label="Remove Manager", style=discord.ButtonStyle.gray)
     async def remove_manager(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not data['teams']:
             await interaction.response.send_message("No teams available!", ephemeral=True)
             return
         
-        embed = discord.Embed(
-            title="Remove Manager",
-            description="Select a team to remove a manager from:",
-            color=discord.Color.blue()
-        )
-        
         view = RemoveManagerView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message("Select team to remove manager:", view=view, ephemeral=True)
 
-# VIEW PARA DELETAR TIME - CORRIGIDA
 class DeleteTeamView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
         
-        # Criar opções do select
         options = []
         for team_id, team in data['teams'].items():
-            options.append(discord.SelectOption(
-                label=team['name'], 
-                value=team_id,
-                description=f"ID: {team_id} | Players: {len(team['players'])}/{team['limit']}"
-            ))
+            options.append(discord.SelectOption(label=team['name'], value=team_id))
         
         if options:
-            select = discord.ui.Select(
-                placeholder="Select a team to delete...",
-                options=options[:25],
-                custom_id="delete_team_select"
-            )
+            select = discord.ui.Select(placeholder="Select a team to delete...", options=options[:25])
             select.callback = self.delete_team_callback
             self.add_item(select)
         
-        # Botão cancelar
-        cancel_button = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_delete")
-        cancel_button.callback = self.cancel_callback
-        self.add_item(cancel_button)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
+        cancel.callback = self.cancel_callback
+        self.add_item(cancel)
     
     async def delete_team_callback(self, interaction: discord.Interaction):
         team_id = interaction.data['values'][0]
         team = data['teams'].pop(team_id)
         save_data(data)
-        
-        embed = discord.Embed(
-            title="Team Deleted",
-            description=f"✅ Team **{team['emoji']} {team['name']}** has been deleted!",
-            color=discord.Color.green()
-        )
-        
-        await interaction.response.edit_message(embed=embed, view=None)
-        
-        await send_log(interaction.guild, 
-            "Team Deleted", 
-            f"**Team:** {team['emoji']} {team['name']}\n"
-            f"**Deleted by:** {interaction.user.mention}")
+        await interaction.response.edit_message(content=f"✅ Team **{team['name']}** deleted!", view=None)
+        await send_log(interaction.guild, "Team Deleted", f"**Team:** {team['emoji']} {team['name']}\n**Deleted by:** {interaction.user.mention}")
     
     async def cancel_callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(content="Operation cancelled.", embed=None, view=None)
+        await interaction.response.edit_message(content="Cancelled.", view=None)
 
-# VIEW PARA ADICIONAR PLAYER
 class AddPlayerView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
         
         options = []
         for team_id, team in data['teams'].items():
-            options.append(discord.SelectOption(
-                label=team['name'], 
-                value=team_id,
-                description=f"Players: {len(team['players'])}/{team['limit']}"
-            ))
+            options.append(discord.SelectOption(label=team['name'], value=team_id))
         
         if options:
-            select = discord.ui.Select(
-                placeholder="Select a team to add player...",
-                options=options[:25],
-                custom_id="add_player_select"
-            )
-            select.callback = self.add_player_callback
+            select = discord.ui.Select(placeholder="Select a team...", options=options[:25])
+            select.callback = self.select_callback
             self.add_item(select)
         
-        cancel_button = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_add")
-        cancel_button.callback = self.cancel_callback
-        self.add_item(cancel_button)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
+        cancel.callback = self.cancel_callback
+        self.add_item(cancel)
     
-    async def add_player_callback(self, interaction: discord.Interaction):
+    async def select_callback(self, interaction: discord.Interaction):
         team_id = interaction.data['values'][0]
         modal = AddPlayerModal(team_id)
         await interaction.response.send_modal(modal)
     
     async def cancel_callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(content="Operation cancelled.", embed=None, view=None)
+        await interaction.response.edit_message(content="Cancelled.", view=None)
 
-# VIEW PARA REMOVER MANAGER
 class RemoveManagerView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
         
         options = []
         for team_id, team in data['teams'].items():
-            options.append(discord.SelectOption(
-                label=team['name'], 
-                value=team_id,
-                description=f"Manager: {team.get('manager_id', 'None')}"
-            ))
+            options.append(discord.SelectOption(label=team['name'], value=team_id))
         
         if options:
-            select = discord.ui.Select(
-                placeholder="Select a team...",
-                options=options[:25],
-                custom_id="remove_manager_select"
-            )
-            select.callback = self.select_team_callback
+            select = discord.ui.Select(placeholder="Select a team...", options=options[:25])
+            select.callback = self.select_callback
             self.add_item(select)
         
-        cancel_button = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="cancel_remove")
-        cancel_button.callback = self.cancel_callback
-        self.add_item(cancel_button)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
+        cancel.callback = self.cancel_callback
+        self.add_item(cancel)
     
-    async def select_team_callback(self, interaction: discord.Interaction):
+    async def select_callback(self, interaction: discord.Interaction):
         team_id = interaction.data['values'][0]
         team = data['teams'][team_id]
         
-        # Criar nova view com botões para escolher qual manager remover
         view = discord.ui.View(timeout=60)
         
         if team.get('manager_id'):
-            btn = discord.ui.Button(
-                label=f"Remove Manager", 
-                style=discord.ButtonStyle.red,
-                custom_id=f"remove_mgr_{team_id}"
-            )
-            
-            async def remove_manager(interaction):
+            btn = discord.ui.Button(label="Remove Manager", style=discord.ButtonStyle.red)
+            async def remove_mgr(i):
                 team['manager_id'] = None
                 save_data(data)
-                await interaction.response.edit_message(
-                    content=f"✅ Manager removed from **{team['name']}**!", 
-                    embed=None, 
-                    view=None
-                )
-                await send_log(interaction.guild, "Manager Removed", f"**Team:** {team['emoji']} {team['name']}\n**Removed by:** {interaction.user.mention}")
-            
-            btn.callback = remove_manager
+                await i.response.edit_message(content=f"✅ Manager removed from **{team['name']}**!", view=None)
+                await send_log(i.guild, "Manager Removed", f"**Team:** {team['emoji']} {team['name']}\n**Removed by:** {i.user.mention}")
+            btn.callback = remove_mgr
             view.add_item(btn)
         
         if team.get('co_manager_id'):
-            btn2 = discord.ui.Button(
-                label=f"Remove Co-Manager", 
-                style=discord.ButtonStyle.red,
-                custom_id=f"remove_comgr_{team_id}"
-            )
-            
-            async def remove_co_manager(interaction):
+            btn2 = discord.ui.Button(label="Remove Co-Manager", style=discord.ButtonStyle.red)
+            async def remove_comgr(i):
                 team['co_manager_id'] = None
                 save_data(data)
-                await interaction.response.edit_message(
-                    content=f"✅ Co-Manager removed from **{team['name']}**!", 
-                    embed=None, 
-                    view=None
-                )
-                await send_log(interaction.guild, "Co-Manager Removed", f"**Team:** {team['emoji']} {team['name']}\n**Removed by:** {interaction.user.mention}")
-            
-            btn2.callback = remove_co_manager
+                await i.response.edit_message(content=f"✅ Co-Manager removed from **{team['name']}**!", view=None)
+                await send_log(i.guild, "Co-Manager Removed", f"**Team:** {team['emoji']} {team['name']}\n**Removed by:** {i.user.mention}")
+            btn2.callback = remove_comgr
             view.add_item(btn2)
         
-        cancel_btn = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
-        cancel_btn.callback = lambda i: i.response.edit_message(content="Cancelled.", embed=None, view=None)
-        view.add_item(cancel_btn)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
+        cancel.callback = lambda i: i.response.edit_message(content="Cancelled.", view=None)
+        view.add_item(cancel)
         
-        embed = discord.Embed(
-            title=f"Remove Manager from {team['name']}",
-            description="Select which manager to remove:",
-            color=discord.Color.blue()
-        )
-        
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.edit_message(content=f"Select manager to remove from **{team['name']}**:", view=view)
     
     async def cancel_callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(content="Operation cancelled.", embed=None, view=None)
+        await interaction.response.edit_message(content="Cancelled.", view=None)
 
 class AddPlayerModal(discord.ui.Modal, title="Add Player to Team"):
-    user_mention = discord.ui.TextInput(
-        label="User Mention or ID",
-        placeholder="Example: @player or 123456789",
-        required=True
-    )
+    user_id = discord.ui.TextInput(label="User ID", placeholder="Enter Discord ID (right-click user > Copy ID)", required=True)
     
     def __init__(self, team_id):
         super().__init__()
@@ -501,20 +411,12 @@ class AddPlayerModal(discord.ui.Modal, title="Add Player to Team"):
     
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            user_input = self.user_mention.value.strip()
-            user_id_match = re.search(r'(\d+)', user_input)
-            
-            if not user_id_match:
-                await interaction.response.send_message("❌ Invalid user! Please mention a user or provide ID.", ephemeral=True)
-                return
-            
-            user_id = int(user_id_match.group(1))
+            user_id = int(self.user_id.value)
             team = data['teams'][self.team_id]
             
-            # Verificações
             for t in data['teams'].values():
                 if user_id in t['players']:
-                    await interaction.response.send_message("❌ This player is already in another team!", ephemeral=True)
+                    await interaction.response.send_message("❌ Player already in another team!", ephemeral=True)
                     return
             
             if len(team['players']) >= team['limit']:
@@ -531,14 +433,10 @@ class AddPlayerModal(discord.ui.Modal, title="Add Player to Team"):
             save_data(data)
             
             await interaction.response.send_message(f"✅ Added <@{user_id}> to **{team['name']}**!", ephemeral=True)
-            await send_log(interaction.guild, 
-                "Player Added", 
-                f"**Team:** {team['emoji']} {team['name']}\n"
-                f"**Player:** <@{user_id}>\n"
-                f"**Added by:** {interaction.user.mention}")
+            await send_log(interaction.guild, "Player Added", f"**Team:** {team['emoji']} {team['name']}\n**Player:** <@{user_id}>\n**Added by:** {interaction.user.mention}")
             
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Error adding player!", ephemeral=True)
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid ID!", ephemeral=True)
 
 @bot.tree.command(name="up", description="Upgrade player tier")
 @app_commands.default_permissions(administrator=True)
@@ -557,19 +455,9 @@ async def upgrade(interaction: discord.Interaction, user: discord.User, tier: st
     data['players'][str(user.id)]['value'] = value
     save_data(data)
     
-    embed = discord.Embed(
-        title="⭐ Player Upgraded",
-        description=f"**Player:** {user.mention}\n**New Tier:** {tier}\n**Value:** {value}",
-        color=discord.Color.gold()
-    )
+    embed = discord.Embed(title="⭐ Player Upgraded", description=f"**Player:** {user.mention}\n**New Tier:** {tier}\n**Value:** {value}", color=discord.Color.gold())
     await interaction.response.send_message(embed=embed)
-    
-    await send_log(interaction.guild, 
-        "Player Upgraded", 
-        f"**Player:** {user.mention}\n"
-        f"**New Tier:** {tier}\n"
-        f"**Value:** {value}\n"
-        f"**Upgraded by:** {interaction.user.mention}")
+    await send_log(interaction.guild, "Player Upgraded", f"**Player:** {user.mention}\n**New Tier:** {tier}\n**Value:** {value}\n**Upgraded by:** {interaction.user.mention}")
 
 # ============ TEAM SLASH COMMANDS ============
 
@@ -580,17 +468,10 @@ async def teamlist(interaction: discord.Interaction):
         return
     
     embed = discord.Embed(title="All Teams", color=discord.Color.blue())
-    
     for team_id, team in data['teams'].items():
         manager = f"<@{team['manager_id']}>" if team['manager_id'] else "None"
         co_manager = f"<@{team['co_manager_id']}>" if team.get('co_manager_id') else "None"
-        
-        embed.add_field(
-            name=f"{team['emoji']} {team['name']}",
-            value=f"**Manager:** {manager}\n**Co-Manager:** {co_manager}\n**Players:** {len(team['players'])}/{team['limit']}",
-            inline=False
-        )
-    
+        embed.add_field(name=f"{team['emoji']} {team['name']}", value=f"**Manager:** {manager}\n**Co-Manager:** {co_manager}\n**Players:** {len(team['players'])}/{team['limit']}", inline=False)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="contract", description="Send contract to a player")
@@ -609,38 +490,28 @@ async def contract(interaction: discord.Interaction, user: discord.User):
             break
     
     if not user_team:
-        await interaction.response.send_message("❌ You are not a manager of any team!", ephemeral=True)
+        await interaction.response.send_message("❌ You are not a manager!", ephemeral=True)
         return
     
     for team in data['teams'].values():
         if user.id in team['players']:
-            await interaction.response.send_message("❌ This player is already in a team!", ephemeral=True)
+            await interaction.response.send_message("❌ Player already in a team!", ephemeral=True)
             return
     
-    embed = discord.Embed(
-        title="📄 Contract Offer",
-        description=f"You received a contract from **{user_team['name']}**",
-        color=discord.Color.blue()
-    )
+    embed = discord.Embed(title="📄 Contract Offer", description=f"You received a contract from **{user_team['name']}**", color=discord.Color.blue())
     embed.add_field(name="Team", value=f"{user_team['emoji']} {user_team['name']}", inline=True)
     embed.add_field(name="Manager", value=interaction.user.mention, inline=True)
     embed.add_field(name="Role", value=user_role, inline=True)
-    embed.set_footer(text="You have 5 minutes to respond")
+    embed.set_footer(text="You have 5 minutes")
     
     view = ContractView(user_team['id'], interaction.user.id, user.id, interaction.guild_id)
     
     try:
         await user.send(embed=embed, view=view)
         await interaction.response.send_message(f"✅ Contract sent to {user.mention}!", ephemeral=True)
-        
-        await send_log(interaction.guild, 
-            "Contract Sent", 
-            f"**Team:** {user_team['emoji']} {user_team['name']}\n"
-            f"**To:** {user.mention}\n"
-            f"**Sent by:** {interaction.user.mention} ({user_role})")
-        
+        await send_log(interaction.guild, "Contract Sent", f"**Team:** {user_team['emoji']} {user_team['name']}\n**To:** {user.mention}\n**Sent by:** {interaction.user.mention}")
     except discord.Forbidden:
-        await interaction.response.send_message("❌ Cannot DM this user! Make sure DMs are open.", ephemeral=True)
+        await interaction.response.send_message("❌ Cannot DM this user!", ephemeral=True)
 
 class ContractView(discord.ui.View):
     def __init__(self, team_id, manager_id, player_id, guild_id):
@@ -650,20 +521,20 @@ class ContractView(discord.ui.View):
         self.player_id = player_id
         self.guild_id = guild_id
     
-    @discord.ui.button(label="Accept", style=discord.ButtonStyle.green, custom_id="accept_contract")
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.green)
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.player_id:
-            await interaction.response.send_message("❌ This contract is not for you!", ephemeral=True)
+            await interaction.response.send_message("❌ Not for you!", ephemeral=True)
             return
         
         team = data['teams'][str(self.team_id)]
         
         if len(team['players']) >= team['limit']:
-            await interaction.response.send_message(f"❌ Team is full! Limit: {team['limit']}", ephemeral=True)
+            await interaction.response.send_message("❌ Team is full!", ephemeral=True)
             return
         
         if self.player_id in [p for t in data['teams'].values() for p in t['players']]:
-            await interaction.response.send_message("❌ You are already in another team!", ephemeral=True)
+            await interaction.response.send_message("❌ You are already in a team!", ephemeral=True)
             return
         
         team['players'].append(self.player_id)
@@ -678,38 +549,28 @@ class ContractView(discord.ui.View):
         await interaction.response.send_message(f"✅ You joined **{team['name']}**!")
         
         guild = interaction.client.get_guild(self.guild_id)
-        await send_log(guild, 
-            "Contract Accepted", 
-            f"**Team:** {team['emoji']} {team['name']}\n"
-            f"**Player:** {interaction.user.mention}\n"
-            f"**Manager:** <@{self.manager_id}>")
+        await send_log(guild, "Contract Accepted", f"**Team:** {team['emoji']} {team['name']}\n**Player:** {interaction.user.mention}\n**Manager:** <@{self.manager_id}>")
         
         manager = await interaction.client.fetch_user(self.manager_id)
         if manager:
-            await manager.send(f"✅ {interaction.user.mention} accepted the contract for **{team['name']}**!")
-        
+            await manager.send(f"✅ {interaction.user.mention} accepted the contract!")
         self.stop()
     
-    @discord.ui.button(label="Decline", style=discord.ButtonStyle.red, custom_id="decline_contract")
+    @discord.ui.button(label="Decline", style=discord.ButtonStyle.red)
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.player_id:
-            await interaction.response.send_message("❌ This contract is not for you!", ephemeral=True)
+            await interaction.response.send_message("❌ Not for you!", ephemeral=True)
             return
         
         team = data['teams'][str(self.team_id)]
         await interaction.response.send_message(f"❌ You declined the contract from **{team['name']}**.")
         
         guild = interaction.client.get_guild(self.guild_id)
-        await send_log(guild, 
-            "Contract Declined", 
-            f"**Team:** {team['emoji']} {team['name']}\n"
-            f"**Player:** {interaction.user.mention}\n"
-            f"**Manager:** <@{self.manager_id}>")
+        await send_log(guild, "Contract Declined", f"**Team:** {team['emoji']} {team['name']}\n**Player:** {interaction.user.mention}\n**Manager:** <@{self.manager_id}>")
         
         manager = await interaction.client.fetch_user(self.manager_id)
         if manager:
-            await manager.send(f"❌ {interaction.user.mention} declined the contract for **{team['name']}**.")
-        
+            await manager.send(f"❌ {interaction.user.mention} declined the contract.")
         self.stop()
 
 @bot.tree.command(name="roster", description="Show your team roster")
@@ -735,12 +596,11 @@ async def roster(interaction: discord.Interaction):
         except:
             players_list.append(f"User ID: {player_id}")
     
-    players_text = "\n".join(players_list) if players_list else "No players yet"
+    players_text = "\n".join(players_list) if players_list else "No players"
     
     embed = discord.Embed(title=f"📋 Roster of {user_team['name']}", color=discord.Color.blue())
     embed.add_field(name="Manager Team", value=f"**Manager:** {manager}\n**Co-Manager:** {co_manager}", inline=False)
     embed.add_field(name=f"Players ({len(user_team['players'])}/{user_team['limit']})", value=players_text, inline=False)
-    
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="kick", description="Kick a player from your team")
@@ -767,15 +627,10 @@ async def kick(interaction: discord.Interaction, user: discord.User):
     save_data(data)
     
     await interaction.response.send_message(f"✅ {user.mention} kicked from **{user_team['name']}**!")
-    
-    await send_log(interaction.guild, 
-        "Player Kicked", 
-        f"**Team:** {user_team['emoji']} {user_team['name']}\n"
-        f"**Player:** {user.mention}\n"
-        f"**Kicked by:** {interaction.user.mention}")
+    await send_log(interaction.guild, "Player Kicked", f"**Team:** {user_team['emoji']} {user_team['name']}\n**Player:** {user.mention}\n**Kicked by:** {interaction.user.mention}")
     
     try:
-        await user.send(f"❌ You were kicked from **{user_team['name']}** by {interaction.user.mention}!")
+        await user.send(f"❌ You were kicked from **{user_team['name']}**!")
     except:
         pass
 
@@ -799,11 +654,7 @@ async def leaveteam(interaction: discord.Interaction):
     save_data(data)
     
     await interaction.response.send_message(f"✅ You left **{user_team['name']}**!")
-    
-    await send_log(interaction.guild, 
-        "Player Left", 
-        f"**Team:** {user_team['emoji']} {user_team['name']}\n"
-        f"**Player:** {interaction.user.mention}")
+    await send_log(interaction.guild, "Player Left", f"**Team:** {user_team['emoji']} {user_team['name']}\n**Player:** {interaction.user.mention}")
 
 # ============ PLAYER SLASH COMMANDS ============
 
@@ -821,11 +672,7 @@ async def agency(interaction: discord.Interaction, message: str):
                 team_emoji = team['emoji']
                 break
     
-    embed = discord.Embed(
-        title="🎮 New Agency Player",
-        description=f"**Player:** {interaction.user.mention}\n**Message:** {message}",
-        color=discord.Color.blue()
-    )
+    embed = discord.Embed(title="🎮 New Agency Player", description=f"**Player:** {interaction.user.mention}\n**Message:** {message}", color=discord.Color.blue())
     embed.add_field(name="Current Status", value=f"{team_emoji} {team_status}", inline=False)
     embed.add_field(name="Tier", value=player_data['tier'], inline=True)
     embed.add_field(name="Value", value=player_data['value'], inline=True)
@@ -833,4 +680,58 @@ async def agency(interaction: discord.Interaction, message: str):
     
     agency_channel = interaction.guild.get_channel(AGENCY_CHANNEL_ID)
     if agency_channel:
-        await
+        await agency_channel.send(embed=embed)
+        await interaction.response.send_message("✅ Agency profile posted!", ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="scouting", description="Post a scouting request")
+async def scouting(interaction: discord.Interaction, message: str):
+    is_manager = False
+    user_team = None
+    
+    for team_id, team in data['teams'].items():
+        if interaction.user.id in [team['manager_id'], team.get('co_manager_id')]:
+            is_manager = True
+            user_team = team
+            break
+    
+    if not is_manager:
+        await interaction.response.send_message("❌ Only managers can use this!", ephemeral=True)
+        return
+    
+    embed = discord.Embed(title="🔍 Scouting", description=f"**Position:** {message}", color=discord.Color.blue())
+    embed.add_field(name="Team", value=f"{user_team['emoji']} {user_team['name']}", inline=True)
+    embed.add_field(name="Manager", value=interaction.user.mention, inline=True)
+    embed.set_footer(text="Contact the manager for trials")
+    
+    scouting_channel = interaction.guild.get_channel(SCOUTING_CHANNEL_ID)
+    if scouting_channel:
+        await scouting_channel.send(embed=embed)
+        await interaction.response.send_message("✅ Scouting request posted!", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Channel not found!", ephemeral=True)
+
+@bot.tree.command(name="profile", description="Show your player profile")
+async def profile(interaction: discord.Interaction):
+    player_data = data['players'].get(str(interaction.user.id), {'tier': 'D', 'value': '0', 'team': None})
+    
+    member = interaction.user
+    joined_at = member.joined_at
+    days_on_server = (datetime.now() - joined_at.replace(tzinfo=None)).days if joined_at else 0
+    
+    embed = discord.Embed(title=f"👤 {interaction.user.name}", color=discord.Color.blue())
+    embed.add_field(name="Tier", value=player_data['tier'], inline=True)
+    embed.add_field(name="Value", value=player_data['value'], inline=True)
+    embed.add_field(name="Server Time", value=f"{days_on_server} days", inline=True)
+    embed.add_field(name="Current Team", value=player_data.get('team', 'Free Agent'), inline=True)
+    
+    await interaction.response.send_message(embed=embed)
+
+# ============ RUN BOT ============
+TOKEN = os.getenv('DISCORD_TOKEN')
+if not TOKEN:
+    print("Error: DISCORD_TOKEN not set!")
+    exit(1)
+
+bot.run(TOKEN)
